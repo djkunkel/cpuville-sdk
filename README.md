@@ -12,7 +12,7 @@ on PATH.
 . ./env.sh                 # put bin/ on PATH (zmac, z80asm, runmon, ...)
 vendor/zmac/build.sh       # build & install zmac into bin/
 vendor/z80asm/build.sh     # build & install z80asm into bin/
-tio --map ODELBS -b 76800 /dev/ttyUSB0   # open a terminal (see ./tio.sh)
+./console.sh               # open a serial terminal (baud/device from serial.conf)
 ```
 
 In another shell, assemble and load a program:
@@ -28,8 +28,8 @@ runmon myprog.bin          # load into RAM at 0x0800 and run
 ```
 z80/
 ├── env.sh            # source this to put bin/ on PATH
-├── serial.conf       # SERIAL_DEV used by runmon/loadmon/sendmon
-├── tio.sh            # one-liner for the serial terminal (tio)
+├── serial.conf       # SERIAL_DEV + BAUD_RATE used by all host tooling
+├── console.sh        # serial terminal (tio) using serial.conf settings
 ├── bin/              # everything below is on PATH after `. ./env.sh`
 │   ├── zmac          # vendored assembler (Russell Lennon's zmac)
 │   ├── z80asm        # vendored assembler (shevek's z80asm)
@@ -37,7 +37,8 @@ z80/
 │   ├── bz80asm       # wrapper: z80asm --list=<base>.lst -o <base>.bin <src>
 │   ├── runmon        # load + run a .bin at 0x0800 over serial
 │   ├── loadmon       # load a .bin at 0x0800 (no run)
-│   └── sendmon       # send raw bytes (for manual handshake)
+│   ├── sendmon       # send raw bytes (for manual handshake)
+│   └── cpmput        # send a file via XMODEM (sx) to a waiting receiver
 ├── sys/
 │   └── monitor/      # ROM monitor source + build.sh
 └── vendor/
@@ -128,14 +129,15 @@ etc.) that user programs may call.
 ## Loading and running programs
 
 Three host scripts automate talking to the monitor. All of them read
-`serial.conf` from the project root to find the serial device
-(default `/dev/ttyUSB0`).
+`serial.conf` from the project root for the serial device and baud rate
+(defaults `/dev/ttyUSB0` and `76800`).
 
 | Command     | Does what                                                    |
 |-------------|--------------------------------------------------------------|
 | `runmon F`  | Full handshake (`bload`, `0800`, length, bytes) then `run 0800`. |
 | `loadmon F` | Same handshake, but stops short of `run` (leaves it loaded). |
 | `sendmon F` | Just pipes the raw bytes to the serial port (for manual handshaking). |
+| `cpmput F`  | Sends `F` via XMODEM (classic checksum or CRC, auto-negotiated by `sx`). The receiver on the Z80 must already be waiting for an XMODEM transfer (e.g. a CP/M `PIP`/`LOAD` prompt) before invoking. |
 
 Typical loop during development:
 
@@ -143,8 +145,8 @@ Typical loop during development:
 bz80asm myprog.asm && runmon myprog.bin
 ```
 
-To watch monitor output / interact with the monitor by hand, run `./tio.sh`
-(or `tio --map ODELBS -b 76800 "$SERIAL_DEV"` directly) in a separate
+To watch monitor output / interact with the monitor by hand, run `./console.sh`
+(which reads `SERIAL_DEV` and `BAUD_RATE` from `serial.conf`) in a separate
 terminal.
 
 ## Writing your first program
