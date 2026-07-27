@@ -38,7 +38,8 @@ z80/
 │   ├── runmon        # load + run a .bin at 0x0800 over serial
 │   ├── loadmon       # load a .bin at 0x0800 (no run)
 │   ├── sendmon       # send raw bytes (for manual handshake)
-│   └── cpmput        # send a file via XMODEM (sx) to a waiting receiver
+│   ├── cpmput        # send a file via XMODEM (sx) to a waiting receiver
+│   └── cpmget        # receive a file via XMODEM (rx) from a waiting sender
 ├── sys/
 │   └── monitor/      # ROM monitor source + build.sh
 └── vendor/
@@ -138,6 +139,7 @@ Three host scripts automate talking to the monitor. All of them read
 | `loadmon F` | Same handshake, but stops short of `run` (leaves it loaded). |
 | `sendmon F` | Just pipes the raw bytes to the serial port (for manual handshaking). |
 | `cpmput F`  | Sends `F` via XMODEM (classic checksum or CRC, auto-negotiated by `sx`). The receiver on the Z80 must already be waiting for an XMODEM transfer (e.g. a CP/M `PIP`/`LOAD` prompt) before invoking. |
+| `cpmget F`  | Receives `F` via XMODEM classic checksum (`rx -X`). The sender on the Z80 (e.g. `PCPUT file.ext`) must already be running and waiting for the initial NAK handshake byte before invoking. Overwrites any existing local `F`. |
 
 Typical loop during development:
 
