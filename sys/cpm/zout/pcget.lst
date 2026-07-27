@@ -1,0 +1,471 @@
+   1:				;
+   2:				;  PCGET - This CP/M program receives a file from a PC via a serial 
+   3:				;  port and writes it to a file on the CP/M system. The file transfer uses
+   4:				;  the XMODEM protocol. 
+   5:				;
+   6:				;  Note this program is gutted from the Ward Christenson Modem program.
+   7:				;
+   8:				;  Hacked together by Mike Douglas for the Altair 2SIO serial interface board.
+   9:				;	Ver	Date	Desc
+  10:				;	1.0    11/7/12	Initial version
+  11:				;	1.1    2/20/14  Allow transfer to occur over 2SIO port B
+  12:				;	1.2   12/21/14	Send NAK immediately after file open to speed
+  13:				;			up the start-up of file transfer (four second
+  14:				;			delay otherwise).
+  15:				;	2.0	5/11/17	Update for CPUVille system
+  16:				;  Serial Port Equates
+  17:				
+  18:     -	0003          	SIOACR:	.EQU	003H		;2SIO port A control register
+  19:     -	0002          	SIOADR:	.EQU	002H		;2SIO port A data register
+  20:     -	0012          	SIOBCR:	.EQU	012H		;2SIO port B control register
+  21:     -	0013          	SIOBDR	.EQU	013H		;2SIO port B data register
+  22:				
+  23:     -	0001          	XMTMASK:	.EQU	1		;MASK TO ISOLATE XMIT READY BIT
+  24:     -	0001          	XMTRDY:	.EQU	1		;VALUE WHEN READY
+  25:     -	0002          	RCVMASK:	.EQU	2		;MASK TO ISOLATE RECEIVE READY BIT
+  26:     -	0002          	RCVRDY:	.EQU	2		;BIT ON WHEN READY
+  27:				
+  28:				;  Transfer related equates
+  29:				
+  30:     -	0001          	SOH:	.EQU	1
+  31:     -	0004          	EOT:	.EQU	4
+  32:     -	0006          	ACK:	.EQU	6
+  33:     -	0015          	NAK:	.EQU	15H
+  34:     -	0003          	CTRLC:	.EQU	3		;Control-C
+  35:     -	000A          	LF:	.EQU	10
+  36:     -	000D          	CR:	.EQU	13
+  37:				
+  38:     -	0100          		.ORG	100H
+  39:				
+  40:				;  Verify a file name was specified
+  41:				
+  42:    0+13	0100  3A5D00  		lda	PARAM1		;A=1st character of parameter 1
+  43:   13+7	0103  FE20    		cpi	' '		;make sure something entered
+  44:   20+10	0105  C21101  		jnz	doXfer
+  45:   30+10	0108  11E202  		lxi	d,mHelp		;display usage message
+  46:   40+7	010B  0E09    		mvi	c,PRINT
+  47:   47+17	010D  CD0500  		call	BDOS
+  48:   64+10	0110  C9      		ret			;return to CPM
+  49:				
+  50:					
+  51:				;  doXfer - Switch to local stack and do the transfer
+  52:				
+  53:     -	0111          	doXfer:
+  54:   74+10	0111  11C002  		lxi	d,mSendA	;port a send message
+  55:   84+10	0114  210000  		LXI	H,0		;HL=0
+  56:   94+10	0117  39      		DAD	SP		;HL=STACK FROM CP/M
+  57:  104+16	0118  227003  		SHLD	STACK		;..SAVE IT
+  58:  120+10	011B  317003  		LXI	SP,STACK	;SP=MY STACK
+  59:  130+4	011E  AF      		xra	a
+  60:  134+13	011F  327303  		sta	SECTNO		;init sector number to zero
+  61:  147+17	0122  CDBB02  		CALL	INIT_ACIA	;MASTER RESET THE ACIA
+  62:  164+7	0125  0E09    		MVI	C,PRINT		;print the send message
+  63:  171+17	0127  CD0500  		CALL	BDOS		;PRINT ID MESSAGE
+  64:				
+  65:				;  GOBBLE UP GARBAGE CHARS FROM THE LINE
+  66:				
+  67:  188+7	012A  0601    	purge:	MVI	B,1		;times out after 1 second if no data
+  68:  195+17	012C  CD7D02  		CALL	RECV
+  69:  212+10	012F  DA3A01  		jc	RECEIVE_FILE	;line is clear, go receive the file
+  70:  222+7	0132  FE03    		cpi	CTRLC		;exit if abort requested
+  71:  229+10	0134  CA2F03  		jz	abort
+  72:  239+10	0137  C32A01  		jmp	purge
+  73:				;
+  74:				;**************RECEIVE FILE****************
+  75:				;
+  76:     -	013A          	RECEIVE_FILE:
+  77:  249+17	013A  CD1802  		CALL	ERASE_OLD_FILE
+  78:  266+17	013D  CD2B02  		CALL	MAKE_NEW_FILE
+  79:  283+7	0140  3E15    		MVI	A,NAK
+  80:  290+17	0142  CDAB02  		CALL	SEND		;SEND NAK
+  81:				
+  82:     -	0145          	RECV_LOOP:
+  83:     -	0145          	RECV_HDR:
+  84:  307+7	0145  0603    		MVI	B,3		;3 SEC TIMEOUT
+  85:  314+17	0147  CD7D02  		CALL	RECV
+  86:  331+10	014A  D25D01  		JNC	RHNTO		;NO TIMEOUT
+  87:				
+  88:     -	014D          	RECV_HDR_TIMEOUT:
+  89:     -	014D          	RECV_SECT_ERR:			;PURGE THE LINE OF INPUT CHARS
+  90:  341+7	014D  0601    		MVI	B,1		;1 SEC W/NO CHARS
+  91:  348+17	014F  CD7D02  		CALL	RECV
+  92:  365+10	0152  D24D01  		JNC	RECV_SECT_ERR 	;LOOP UNTIL SENDER DONE
+  93:  375+7	0155  3E15    		MVI	A,NAK
+  94:  382+17	0157  CDAB02  		CALL	SEND		;SEND NAK
+  95:  399+10	015A  C34501  		JMP	RECV_HDR
+  96:				
+  97:				;GOT CHAR - MUST BE SOH OR CTRL-C TO ABORT
+  98:				
+  99:  409+7	015D  FE01    	RHNTO:	CPI	SOH
+ 100:  416+10	015F  CA6F01  		JZ	GOT_SOH
+ 101:  426+7	0162  FE03    		cpi	CTRLC		;control-c to abort?
+ 102:  433+10	0164  CA2F03  		jz	abort
+ 103:  443+7	0167  FE04    		CPI	EOT
+ 104:  450+10	0169  CAEC01  		JZ	GOT_EOT
+ 105:  460+10	016C  C34D01  		JMP	RECV_SECT_ERR
+ 106:				
+ 107:     -	016F          	GOT_SOH:
+ 108:  470+7	016F  0601    		MVI	B,1
+ 109:  477+17	0171  CD7D02  		CALL	RECV
+ 110:  494+10	0174  DA4D01  		JC	RECV_HDR_TIMEOUT
+ 111:  504+5	0177  57      		MOV	D,A		;D=BLK #
+ 112:  509+7	0178  0601    		MVI	B,1
+ 113:  516+17	017A  CD7D02  		CALL	RECV		;GET CMA'D SECT #
+ 114:  533+10	017D  DA4D01  		JC	RECV_HDR_TIMEOUT
+ 115:  543+4	0180  2F      		CMA
+ 116:  547+4	0181  BA      		CMP	D		;GOOD SECTOR #?
+ 117:  551+10	0182  CA8801  		JZ	RECV_SECTOR
+ 118:  561+10	0185  C34D01  		JMP	RECV_SECT_ERR
+ 119:				
+ 120:				;  Receive Sector
+ 121:				
+ 122:     -	0188          	RECV_SECTOR:
+ 123:  571+5	0188  7A      		MOV	A,D		;GET SECTOR #
+ 124:  576+13	0189  327203  		STA	RSECTNO
+ 125:  589+7	018C  0E00    		MVI	C,0		;INIT CKSUM
+ 126:  596+10	018E  218000  		LXI	H,80H		;POINT TO BUFFER
+ 127:     -	0191          	RECV_CHAR:
+ 128:  606+7	0191  0601    		MVI	B,1		;1 SEC TIMEOUT
+ 129:  613+17	0193  CD7D02  		CALL	RECV		;GET CHAR
+ 130:  630+10	0196  DA4D01  		JC	RECV_HDR_TIMEOUT
+ 131:  640+7	0199  77      		MOV	M,A		;STORE CHAR
+ 132:  647+5	019A  2C      		INR	L		;DONE?
+ 133:  652+10	019B  C29101  		JNZ	RECV_CHAR
+ 134:				
+ 135:				;VERIFY CHECKSUM
+ 136:				
+ 137:  662+5	019E  51      		MOV	D,C		;SAVE CHECKSUM
+ 138:  667+7	019F  0601    		MVI	B,1		;TIMEOUT
+ 139:  674+17	01A1  CD7D02  		CALL	RECV		;GET CHECKSUM
+ 140:  691+10	01A4  DA4D01  		JC	RECV_HDR_TIMEOUT
+ 141:  701+4	01A7  BA      		CMP	D		;CHECK
+ 142:  705+10	01A8  C24D01  		JNZ	RECV_SECT_ERR
+ 143:				;
+ 144:				;GOT A SECTOR, WRITE IF = 1+PREV SECTOR
+ 145:				;
+ 146:  715+13	01AB  3A7203  		LDA	RSECTNO
+ 147:  728+5	01AE  47      		MOV	B,A		;SAVE IT
+ 148:  733+13	01AF  3A7303  		LDA	SECTNO		;GET PREV
+ 149:  746+5	01B2  3C      		INR	A		;CALC NEXT SECTOR #
+ 150:  751+4	01B3  B8      		CMP	B		;MATCH?
+ 151:  755+10	01B4  C2C901  		JNZ	DO_ACK
+ 152:				
+ 153:				;GOT NEW SECTOR - WRITE IT
+ 154:				
+ 155:  765+10	01B7  115C00  		LXI	D,FCB
+ 156:  775+7	01BA  0E15    		MVI	C,WRITE
+ 157:  782+17	01BC  CD0500  		CALL	BDOS
+ 158:  799+4	01BF  B7      		ORA	A
+ 159:  803+10	01C0  C2D101  		JNZ	WRITE_ERROR
+ 160:  813+13	01C3  3A7203  		LDA	RSECTNO
+ 161:  826+13	01C6  327303  		STA	SECTNO		;UPDATE SECTOR #
+ 162:  839+7	01C9  3E06    	DO_ACK:	MVI	A,ACK
+ 163:  846+17	01CB  CDAB02  		CALL	SEND
+ 164:  863+10	01CE  C34501  		JMP	RECV_LOOP
+ 165:				
+ 166:     -	01D1          	WRITE_ERROR:
+ 167:  873+17	01D1  CD7002  		CALL	ERXIT
+ 168:     -	01D4  0D0A0A45		.DB	13,10,10,"Error Writing File",13,10,'$'
+	              72726F72
+	              20577269
+	              74696E67
+	              2046696C
+	              650D0A24
+ 169:				
+ 170:     -	01EC          	GOT_EOT:
+ 171:  890+7	01EC  3E06    		MVI	A,ACK		;ACK THE EOT
+ 172:  897+17	01EE  CDAB02  		CALL	SEND
+ 173:  914+10	01F1  115C00  		LXI	D,FCB
+ 174:  924+7	01F4  0E10    		MVI	C,CLOSE
+ 175:  931+17	01F6  CD0500  		CALL	BDOS
+ 176:  948+5	01F9  3C      		INR	A
+ 177:  953+10	01FA  C21503  		JNZ	XFER_CPLT
+ 178:  963+17	01FD  CD7002  		CALL	ERXIT
+ 179:     -	0200  0D0A0A45		.DB	13,10,10,"Error Closing File",13,10,'$'
+	              72726F72
+	              20436C6F
+	              73696E67
+	              2046696C
+	              650D0A24
+ 180:				;
+ 181:     -	0218          	ERASE_OLD_FILE:
+ 182:  980+10	0218  115C00  		LXI	D,FCB
+ 183:  990+7	021B  0E11    		MVI	C,SRCHF		;SEE IF IT EXISTS
+ 184:  997+17	021D  CD0500  		CALL	BDOS
+ 185: 1014+5	0220  3C      		INR	A		;FOUND?
+ 186: 1019+5+6	0221  C8      		RZ			;NO, RETURN
+ 187: 1024+10	0222  115C00  	ERAY:	LXI	D,FCB
+ 188: 1034+7	0225  0E13    		MVI	C,ERASE
+ 189: 1041+17	0227  CD0500  		CALL	BDOS
+ 190: 1058+10	022A  C9      		RET
+ 191:				;
+ 192:     -	022B          	MAKE_NEW_FILE:
+ 193: 1068+10	022B  115C00  		LXI	D,FCB
+ 194: 1078+7	022E  0E16    		MVI	C,MAKE
+ 195: 1085+17	0230  CD0500  		CALL	BDOS
+ 196: 1102+5	0233  3C      		INR	A		;FF=BAD
+ 197: 1107+5+6	0234  C0      		RNZ			;OPEN OK
+ 198:				
+ 199:				;DIRECTORY FULL - CAN'T MAKE FILE
+ 200: 1112+17	0235  CD7002  		CALL	ERXIT
+ 201:     -	0238  0D0A0A45		.DB	13,10,10,"Error - Cannot Make File",13,10
+	              72726F72
+	              202D2043
+	              616E6E6F
+	              74204D61
+	              6B652046
+	              696C650D
+	              0A
+ 202:     -	0255  28646972		.DB	"(directory must be full)",13,10,'$'
+	              6563746F
+	              7279206D
+	              75737420
+	              62652066
+	              756C6C29
+	              0D0A24
+ 203:				;
+ 204:				; S U B R O U T I N E S
+ 205:				;
+ 206:				; - - - - - - - - - - - - - - -
+ 207:				
+ 208:				;EXIT PRINTING MESSAGE FOLLOWING 'CALL ERXIT'
+ 209:				
+ 210: 1129+10	0270  D1      	ERXIT:	POP	D		;GET MESSAGE
+ 211: 1139+7	0271  0E09    		MVI	C,PRINT
+ 212: 1146+17	0273  CD0500  		CALL	BDOS		;PRINT MESSAGE
+ 213: 1163+16	0276  2A7003  	EXIT:	LHLD	STACK		;GET ORIGINAL STACK
+ 214: 1179+5	0279  F9      		SPHL			;RESTORE IT
+ 215:				;	RET			;--EXIT-- TO CP/M
+ 216: 1184+10	027A  C30000  		jmp	0		; For interrupting system
+ 217:				
+ 218:				; - - - - - - - - - - - - - - -
+ 219:				;MODEM RECV
+ 220:				;-------------------------------------
+ 221: 1194+11	027D  D5      	RECV:	PUSH	D		;SAVE
+ 222:     -	027E          	MSEC:	
+ 223:				;	lxi	d,(159 shl 8)	;49 cycle loop, 6.272ms/wrap * 159 = 1 second
+ 224: 1205+10	027E  11009F  		lxi	d,09F00H	;49 cycle loop, 6.272ms/wrap * 159 = 1 second
+ 225:				
+ 226:				;  port A input
+ 227:				
+ 228: 1215+10	0281  DB03    	MWTI:	IN	SIOACR
+ 229: 1225+7	0283  E602    		ANI	RCVMASK
+ 230: 1232+7	0285  FE02    		CPI	RCVRDY
+ 231: 1239+10	0287  CA9902  		JZ	MCHAR		;GOT CHAR
+ 232: 1249+5	028A  1D      		DCR	E		;COUNT DOWN
+ 233: 1254+10	028B  C28102  		JNZ	MWTI		;FOR TIMEOUT
+ 234: 1264+5	028E  15      		DCR	D
+ 235: 1269+10	028F  C28102  		JNZ	MWTI
+ 236: 1279+5	0292  05      		DCR	B		;DCR # OF SECONDS
+ 237: 1284+10	0293  C27E02  		JNZ	MSEC
+ 238:				
+ 239:				;MODEM TIMED OUT RECEIVING
+ 240:				
+ 241: 1294+10	0296  D1      		POP	D		;RESTORE D,E
+ 242: 1304+4	0297  37      		STC			;CARRY SHOWS TIMEOUT
+ 243: 1308+10	0298  C9      		RET
+ 244:				
+ 245:				;GOT MODEM CHAR
+ 246:				
+ 247: 1318+10	0299  DB02    	MCHAR:	IN	SIOADR
+ 248: 1328+10	029B  D1      		POP	D		;RESTORE DE
+ 249: 1338+11	029C  F5      		PUSH	PSW		;CALC CHECKSUM
+ 250: 1349+4	029D  81      		ADD	C
+ 251: 1353+5	029E  4F      		MOV	C,A
+ 252: 1358+10	029F  F1      		POP	PSW
+ 253: 1368+4	02A0  B7      		ORA	A		;TURN OFF CARRY TO SHOW NO TIMEOUT
+ 254: 1372+10	02A1  C9      		RET
+ 255:				
+ 256:				
+ 257:				;GOT MODEM CHAR
+ 258:				
+ 259: 1382+10	02A2  DB13    	MCHARB:	IN	SIOBDR
+ 260: 1392+10	02A4  D1      		POP	D		;RESTORE DE
+ 261: 1402+11	02A5  F5      		PUSH	PSW		;CALC CHECKSUM
+ 262: 1413+4	02A6  81      		ADD	C
+ 263: 1417+5	02A7  4F      		MOV	C,A
+ 264: 1422+10	02A8  F1      		POP	PSW
+ 265: 1432+4	02A9  B7      		ORA	A		;TURN OFF CARRY TO SHOW NO TIMEOUT
+ 266: 1436+10	02AA  C9      		RET
+ 267:				
+ 268:				; - - - - - - - - - - - - - - -
+ 269:				;MODEM SEND CHAR ROUTINE
+ 270:				;----------------------------------
+ 271:				;
+ 272: 1446+11	02AB  F5      	SEND:	PUSH	PSW		;CHECK IF MONITORING OUTPUT
+ 273: 1457+4	02AC  81      		ADD	C		;CALC CKSUM
+ 274: 1461+5	02AD  4F      		MOV	C,A
+ 275:				
+ 276: 1466+10	02AE  DB03    	SENDW:	IN	SIOACR
+ 277: 1476+7	02B0  E601    		ANI	XMTMASK
+ 278: 1483+7	02B2  FE01    		CPI	XMTRDY
+ 279: 1490+10	02B4  C2AE02  		JNZ	SENDW
+ 280: 1500+10	02B7  F1      		POP	PSW		;GET CHAR
+ 281: 1510+10	02B8  D302    		OUT	SIOADR
+ 282: 1520+10	02BA  C9      		RET
+ 283:				
+ 284:				
+ 285:				; INITITIALIZE THE SERIAL PORT
+ 286:				
+ 287:     -	02BB          	INIT_ACIA:
+ 288:				;	mvi	a,003h		;don't reset console port
+ 289:				;	out	SIOACR
+ 290: 1530+7	02BB  3E15    		mvi	a,015h		;rts on, 8N1
+ 291: 1537+10	02BD  D303    		out	SIOACR
+ 292: 1547+10	02BF  C9      		ret
+ 293:				
+ 294:				
+ 295:     -	02C0  53656E64	mSendA:	.db	"Send the file now using "
+	              20746865
+	              2066696C
+	              65206E6F
+	              77207573
+	              696E6720
+ 296:     -	02D8  584D4F44		.db	"XMODEM...",'$'
+	              454D2E2E
+	              2E24
+ 297:				
+ 298:     -	02E2  0D0A5043	mHelp:	.db	CR,LF,"PCGET 2.0 for CPUVille",CR,LF,LF
+	              47455420
+	              322E3020
+	              666F7220
+	              43505556
+	              696C6C65
+	              0D0A0A
+ 299:     -	02FD  55736167		.db	"Usage: PCGET file.ext",CR,LF
+	              653A2050
+	              43474554
+	              2066696C
+	              652E6578
+	              740D0A
+ 300:     -	0314  24      		.DB	'$'
+ 301:				
+ 302:				;DONE - CLOSE UP SHOP
+ 303:				
+ 304:     -	0315          	XFER_CPLT:
+ 305: 1557+17	0315  CD7002  		CALL	ERXIT
+ 306:     -	0318  0D0A0A54		.DB	13,10,10,"Transfer Complete",13,10,'$'
+	              72616E73
+	              66657220
+	              436F6D70
+	              6C657465
+	              0D0A24
+ 307:				
+ 308: 1574+17	032F  CD7002  	abort:	call	ERXIT
+ 309:     -	0332  0D0A0A54		.db	13,10,10,"Transfer Aborted",13,10,'$'
+	              72616E73
+	              66657220
+	              41626F72
+	              7465640D
+	              0A24
+ 310:				
+ 311:     -	0348          		.DS	40	;STACK AREA
+ 312:     -	0370          	STACK:	.DS	2	;STACK POINTER
+ 313:     -	0372          	RSECTNO:	.DS	1	;RECEIVED SECTOR NUMBER
+ 314:     -	0373          	SECTNO:	.DS	1	;CURRENT SECTOR NUMBER 
+ 315:				
+ 316:				;
+ 317:				; BDOS EQUATES (VERSION 2)
+ 318:				;
+ 319:     -	0001          	RDCON	.EQU	1
+ 320:     -	0002          	WRCON	.EQU	2
+ 321:     -	0009          	PRINT	.EQU	9
+ 322:     -	000B          	CONST	.EQU	11	;CONSOLE STAT
+ 323:     -	000F          	OPEN	.EQU	15	;0FFH=NOT FOUND
+ 324:     -	0010          	CLOSE	.EQU	16	;   "	"
+ 325:     -	0011          	SRCHF	.EQU	17	;   "	"
+ 326:     -	0012          	SRCHN	.EQU	18	;   "	"
+ 327:     -	0013          	ERASE	.EQU	19	;NO RET CODE
+ 328:     -	0014          	READ	.EQU	20	;0=OK, 1=EOF
+ 329:     -	0015          	WRITE	.EQU	21	;0=OK, 1=ERR, 2=?, 0FFH=NO DIR SPC
+ 330:     -	0016          	MAKE	.EQU	22	;0FFH=BAD
+ 331:     -	0017          	REN	.EQU	23	;0FFH=BAD
+ 332:     -	001A          	STDMA	.EQU	26
+ 333:     -	0005          	BDOS	.EQU	5
+ 334:     -	0000          	REIPL	.EQU	0
+ 335:     -	005C          	FCB	.EQU	5CH	;DEFAULT FCB
+ 336:     -	005D          	PARAM1	.EQU	FCB+1	;COMMAND LINE PARAMETER 1 IN FCB
+ 337:     -	006D          	PARAM2	.EQU	PARAM1+16	;COMMAND LINE PARAMETER 2
+ 338:     -	0374          		.END
+
+
+
+Statistics:
+
+     4	passes
+     0	jr promotions
+    68	symbols
+   584	bytes
+
+
+
+Symbol Table:
+
+ACK            =06        6
+BDOS           =05        5
+CLOSE          =10        16
+CONST          =0B        11
+CR             =0D        13
+CTRLC          =03        3
+DO_ACK           1C9      457
+EOT            =04        4
+ERASE          =13        19
+ERASE_OLD_FILE   218      536
+ERAY             222      546
+ERXIT            270      624
+EXIT             276      630
+FCB            =5C        92
+GOT_EOT          1EC      492
+GOT_SOH          16F      367
+INIT_ACIA        2BB      699
+LF             =0A        10
+MAKE           =16        22
+MAKE_NEW_FILE    22B      555
+MCHAR            299      665
+MCHARB           2A2      674
+MSEC             27E      638
+MWTI             281      641
+NAK            =15        21
+OPEN           =0F        15
+PARAM1         =5D        93
+PARAM2         =6D        109
+PRINT          =09        9
+RCVMASK        =02        2
+RCVRDY         =02        2
+RDCON          =01        1
+READ           =14        20
+RECEIVE_FILE     13A      314
+RECV             27D      637
+RECV_CHAR        191      401
+RECV_HDR         145      325
+RECV_HDR_TIMEOUT  14D      333
+RECV_LOOP        145      325
+RECV_SECTOR      188      392
+RECV_SECT_ERR    14D      333
+REIPL          =00        0
+REN            =17        23
+RHNTO            15D      349
+RSECTNO          372      882
+SECTNO           373      883
+SEND             2AB      683
+SENDW            2AE      686
+SIOACR         =03        3
+SIOADR         =02        2
+SIOBCR         =12        18
+SIOBDR         =13        19
+SOH            =01        1
+SRCHF          =11        17
+SRCHN          =12        18
+STACK            370      880
+STDMA          =1A        26
+WRCON          =02        2
+WRITE          =15        21
+WRITE_ERROR      1D1      465
+XFER_CPLT        315      789
+XMTMASK        =01        1
+XMTRDY         =01        1
+abort            32F      815
+doXfer           111      273
+mHelp            2E2      738
+mSendA           2C0      704
+purge            12A      298

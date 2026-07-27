@@ -1,0 +1,62 @@
+   1:				;DJ Kunkel
+   2:				;A stub meant to be loaded to 0800 that will copy 1024 bytes from 900 to to the CP/M TPA area
+   3:				
+   4:				;To use
+   5:				;Start CPM on the CPUville
+   6:				;reset
+   7:				;do a bload of this to 800
+   8:				;do a bload of your max 1024 byte COM file to 900
+   9:				;run 0800
+  10:				;this will: switch to all RAM mode, copy 900 to 100, execute FA00 (restart CPM)
+  11:				; 	then you can "SAVE 2 file.com" (or 3 or 4 depending on how many 256 byte blocks you want to save)
+  12:				
+  13:				include locations.asm
+**** locations.asm ****
+   1:				;stores the locations in memory that the OS components will live at
+   2:				
+   3:				;we can use this unless any changes are made to the ccp or bdos that affect its length
+   4:				;the bios can grow unless it exceeds putsys.asm's ability to save it as it only saves 6400 bytes right now
+   5:				
+   6:				
+   7:     -	E000          	org_ccp:    equ     $E000
+   8:     -	E806          	org_bdos:   equ     org_ccp+$806
+   9:     -	F600          	org_bios:   equ     org_ccp+$1600
+  10:				
+**** savestub.asm ****
+  14:				
+  15:     -	F600          	cpm:		.equ	org_bios		;CP/M cold start entry
+  16:							
+  17:							
+  18:     -	0800          				.org	0800h
+  19:							
+  20:    0+7	0800  3E01    				ld a, 1
+  21:    7+11	0802  D301    				out	(1),a		;switch memory config to all-RAM
+  22:							
+  23:   18+10	0804  210009  				ld hl, 0900h
+  24:   28+10	0807  110001  				ld de, 0100h
+  25:   38+10	080A  010004  				ld bc, 1024
+  26:   48+16+5	080D  EDB0    				ldir
+  27:							
+  28:   64+10	080F  C300F6  				jp cpm
+  29:					
+  30:					
+**** savestub.asm ****
+  31:					
+
+
+
+Statistics:
+
+     3	passes
+     0	jr promotions
+     4	symbols
+    18	bytes
+
+
+
+Symbol Table:
+
+cpm            =F600      62976
+org_bdos       =E806      59398
+org_bios       =F600      62976
+org_ccp        =E000      57344

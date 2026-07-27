@@ -1,0 +1,593 @@
+   1:			;	CP/M CBIOS for CPUville 8-bit computers
+   2:			;	version 3, June 2019 by Donn Stewart
+   3:			;	Modified from skeletal cbios for first level of CP/M 2.0 alteration
+   4:			;	64-sector tracks, numbering starting at zero (sectors 0 to 63)
+   5:			;	Block size 2048
+   6:			;	Disk size 2 mb, DSM 1023, yields 256 tracks (0 to 255)
+   7:			;	4 disks
+   8:			;	Made more efficient use of disk by OR-ing CP/M disk, track, sector values
+   9:			;	to create logical block address (LBA) for IDE disk
+  10:			;	Added greeting message to cold boot
+  11:			;
+  12:			
+  13:			;	Modifed by DJ Kunkel December 2020
+  14:			;	Supports 8 disks with 4K block size
+  15:			
+  16:			import locations.asm
+**** locations.asm ****
+   1:			;stores the locations in memory that the OS components will live at
+   2:			
+   3:			;we can use this unless any changes are made to the ccp or bdos that affect its length
+   4:			;the bios can grow unless it exceeds putsys.asm's ability to save it as it only saves 6400 bytes right now
+   5:			
+   6:			
+   7:	E000          	org_ccp:    equ     $E000
+   8:	E806          	org_bdos:   equ     org_ccp+$806
+   9:	F600          	org_bios:   equ     org_ccp+$1600
+  10:			
+**** cbios.asm ****
+  17:			
+  18:	E000          	ccp:	equ	org_ccp		;base of ccp
+  19:	E806          	bdos:	equ	org_bdos		;bdos entry
+  20:	F600          	bios:	equ	org_bios		;base of bios
+  21:	0004          	cdisk:	equ	0004h		;address of current disk number 0=a,... l5=p
+  22:	0003          	iobyte:	equ	0003h		;intel i/o byte
+  23:	0038          	rst38: equ 0038h	;im 1 reset vector for interrupts
+  24:	0008          	disks:	equ	08h		;number of disks in the system
+  25:			;
+  26:	F600          		org	bios		;origin of this program
+  27:	002C          	nsects:	equ	($-ccp)/128	;warm start sector count
+  28:			;
+  29:			;	jump vector for individual subroutines
+  30:			;
+  31:	F600  C3E6F6  		JP	boot	;cold start
+  32:	F603  C301F7  	wboote:	JP	wboot	;warm start
+  33:	F606  C373F7  		JP	const	;console status
+  34:	F609  C380F7  		JP	conin	;console character in
+  35:	F60C  C38CF7  		JP	conout	;console character out
+  36:	F60F  C397F7  		JP	list	;list character out
+  37:	F612  C39BF7  		JP	punch	;punch character out
+  38:	F615  C39DF7  		JP	reader	;reader character out
+  39:	F618  C3A2F7  		JP	home	;move head to home position
+  40:	F61B  C3A8F7  		JP	seldsk	;select disk
+  41:	F61E  C3C1F7  		JP	settrk	;set track number
+  42:	F621  C3C6F7  		JP	setsec	;set sector number
+  43:	F624  C3D2F7  		JP	setdma	;set dma address
+  44:	F627  C3E4F7  		JP	read	;read disk
+  45:	F62A  C33CF8  		JP	write	;write disk
+  46:	F62D  C399F7  		JP	listst	;return list status
+  47:	F630  C3CBF7  		JP	sectran	;sector translate
+  48:				;nonstandard entries @dj
+  49:	F633  C3D8F7  		JP prmsg ; print a 0 terminated string to console starting at hl
+  50:			;
+  51:			;	Data tables for disks
+  52:			;	Four disks, 26 sectors/track, disk size = number of 1024 byte blocks
+  53:			;	Number of directory entries (32-bytes each) set to 127 per 500 blocks
+  54:			;	Allocation map bits = number of blocks needed to contain directory entries
+  55:			;	No translations -- translation maps commented out
+  56:			;
+  57:			;	disk Parameter header for disk 00
+  58:	F636          	dpbase:	
+  59:	F636  00000000		.DW 0000h,0000h,0000h,0000h,dirbf,dpblk,0000h,all00
+	      00000000
+	      98F8B6F6
+	      000018F9
+  60:	F646  00000000		.DW 0000h,0000h,0000h,0000h,dirbf,dpblk,0000h,all01
+	      00000000
+	      98F8B6F6
+	      000098F9
+  61:	F656  00000000		.DW 0000h,0000h,0000h,0000h,dirbf,dpblk,0000h,all02
+	      00000000
+	      98F8B6F6
+	      000018FA
+  62:	F666  00000000		.DW 0000h,0000h,0000h,0000h,dirbf,dpblk,0000h,all03
+	      00000000
+	      98F8B6F6
+	      000098FA
+  63:	F676  00000000		.DW 0000h,0000h,0000h,0000h,dirbf,dpblk,0000h,all04
+	      00000000
+	      98F8B6F6
+	      000018FB
+  64:	F686  00000000		.DW 0000h,0000h,0000h,0000h,dirbf,dpblk,0000h,all05
+	      00000000
+	      98F8B6F6
+	      000098FB
+  65:	F696  00000000		.DW 0000h,0000h,0000h,0000h,dirbf,dpblk,0000h,all06
+	      00000000
+	      98F8B6F6
+	      000018FC
+  66:	F6A6  00000000		.DW 0000h,0000h,0000h,0000h,dirbf,dpblk,0000h,all07
+	      00000000
+	      98F8B6F6
+	      000098FC
+  67:			
+  68:				;dj - pretty sure my ALVs are too small for 2048 DSM+1 according to: 
+  69:				;http://www.gaby.de/cpm/manuals/archive/cpm22htm/ch6.htm#Section_6.5
+  70:				;most likely need to be 256 bytes
+  71:				;block shift and mask are values from a table indicating how 
+  72:				;much data is in a block (2048 bytes is 4/15)
+  73:			
+  74:				;can we use 256 sectors per track and use the entire space 
+  75:				;in the lower lba?
+  76:			
+  77:				;what determines the max number of tracks? why/how is it 256 right now?
+  78:				;- the number of tracks are determined by the size of the disk
+  79:				;- since we have a DSM+1 of 2048 we are saying there are 2048 blocks on the disk
+  80:				;- the values of BSH(4) and BLM(15) by a table in the manual indicate a 2048 byte block size (BLS), so 2048*2048 = 4MB
+  81:				;- each sector contains 128 bytes, so each track is 128*128 = 16KB, so to
+  82:				;- reach 4MB there must be 256 tracks (16 * 256 * 1024)
+  83:				;--if we went to 256 SPT then (32 * 128 * 1024 = 4MB, so only 128 tracks)
+  84:				
+  85:				;if we reduced the DSM+1 to 1023, we could keep our smaller ALVs
+  86:				;but switching BLS to 4KB, means 5,31 for block shift factors
+  87:				;the ALV now needs to be DSM/8+1 which is 128
+  88:				;255 directory entires means we need 128*2 by the table, which gives us
+  89:				;2 bits which gives us C0 for AL0 and 00 for AL1
+  90:				;we also now need a EXM of 1
+  91:				;http://www.gaby.de/cpm/manuals/archive/cpm22htm/ch6.htm#Section_6.5
+  92:				;it is unclear if we need to subtract blocks from DSM to accomidate the OFFset
+  93:				;we can test with stat a: to see what happens
+  94:			
+  95:				;pretty sure we have to account for it now
+  96:				;since the total space of an empty disk shows 4088K which is 4096K - 8K (for 256x32 dir entries) = 4088K which is not
+  97:				;taking into account the 16K of the reserved track (128bytes x 128 sectors)
+  98:				;so the first disk needs 1023-4(4k) = 1019
+  99:			
+ 100:	F6B6          	dpblk:	;disk parameter block for all disks.
+ 101:	F6B6  8000    		defw	128		;SPT sectors per track (dj, doubled)
+ 102:	F6B8  05      		defm	5		;BSH block shift factor
+ 103:	F6B9  1F      		defm	31		;BLM block mask - with block shift, sets block size to 4096
+ 104:	F6BA  01      		defm	1		;EXM null mask
+ 105:	F6BB  FB03    		defw	1023-4	;DSM disk size-1 = number of blocks in a disk - 1 (-4 for the reserved first track)
+ 106:	F6BD  FF00    		defw	255		;SRM directory max = no. directory entries/disk, arbitrary
+ 107:	F6BF  C0      		defm	$C0		;AL0 alloc 0 -- need 2 bits (blocks) for 256 directory entries -- 
+ 108:	F6C0  00      		defm	$00		;AL1 alloc 1 -- no. bits = (directory max x 32)/block size	
+ 109:	F6C1  0000    		defw	0		;CKS check size -- no checking, so zero
+ 110:	F6C3  0100    		defw	1		;OFF track offset -- first track for system
+ 111:			;
+ 112:			;	end of fixed tables
+ 113:			;
+ 114:			;	Greeting message for cold boot
+ 115:	F6C5  0D0A    	greet:	defm	0dh, 0ah
+ 116:	F6C7  43502F4D		defm	"CP/M 2.2 for DJ-Cpuville 64K"
+	      20322E32
+	      20666F72
+	      20444A2D
+	      43707576
+	      696C6C65
+	      2036344B
+ 117:	F6E3  0D0A00  		defm	0dh, 0ah, 0	
+ 118:			
+ 119:			;	individual subroutines to perform each function
+ 120:	F6E6          	boot:	;entry point from CP/M loader
+ 121:				;CP/M loader has loaded BDOS, CCP and CBIOS
+ 122:				;print greeting and perform parameter initialization
+ 123:	F6E6  21C5F6  		ld	hl,greet	;address of greeting message
+ 124:	F6E9  CDD8F7  		call	prmsg		;print message subroutine
+ 125:	F6EC  AF      		XOR	a		;zero in the accum
+ 126:	F6ED  320300  		LD	(iobyte),A	;clear the iobyte
+ 127:	F6F0  320400  		LD	(cdisk),A	;select disk zero
+ 128:			
+ 129:				;@dj set up a simple interrupt handler for rst vector 38 that simply re-enables interrupts and returns
+ 130:				;we only have a few bytes of space here, however our bios doesn't use the BIOS work area, so we have from $38 up to $5F before we get to the FCB
+ 131:				;so a small handler could be put here by a program later on
+ 132:	F6F3  F3      		di ; make sure interrupts are off
+ 133:	F6F4  ED56    		im 1 ; ensure im 1 (all maskable interrupts go to vector at 38h) is the mode
+ 134:	F6F6  213800  		ld hl, rst38
+ 135:	F6F9  36FB    		ld (hl), $FB ; ei instruction since Z/80 disables interrupts as soon as a handler runs
+ 136:	F6FB  23      		inc hl
+ 137:	F6FC  36C9    		ld (hl), $C9 ; ret
+ 138:			
+ 139:	F6FE  C34AF7  		JP	gocpm		;initialize and go to cp/m
+ 140:			;
+ 141:	F701          	wboot:	;load BDOS and CCP only -- CBIOS should still be there...
+ 142:	F701  318000  		LD	sp, 80h		;use space below buffer for stack
+ 143:	F704  0E00    		LD 	c, 0		;select disk 0
+ 144:	F706  CDA8F7  		call	seldsk
+ 145:	F709  CDA2F7  		call	home		;go to track 00
+ 146:			;
+ 147:	F70C  062C    		LD 	b, nsects	;b counts * of sectors to load
+ 148:	F70E  0E00    		LD 	c, 0		;c has the current track number
+ 149:	F710  1601    		LD 	d, 1		;d has the next sector to read
+ 150:			;	note that we begin by reading track 0, sector 1 since sector 0
+ 151:			;	contains the cold start loader, which is skipped in a warm start
+ 152:	F712  2100E0  		LD	HL, ccp		;base of cp/m (initial load point)
+ 153:	F715          	load1:	;load	one more sector
+ 154:	F715  C5      		PUSH	BC		;save sector count, current track
+ 155:	F716  D5      		PUSH	DE		;save next sector to read
+ 156:	F717  E5      		PUSH	HL		;save dma address
+ 157:	F718  4A      		LD 	c, d		;get sector address to register C
+ 158:	F719  CDC6F7  		call	setsec		;set sector address from register C
+ 159:	F71C  C1      		pop	BC		;recall dma address to b, C
+ 160:	F71D  C5      		PUSH	BC		;replace on stack for later recall
+ 161:	F71E  CDD2F7  		call	setdma		;set dma address from b, C
+ 162:			;
+ 163:			;	drive set to 0, track set, sector set, dma address set
+ 164:	F721  CDE4F7  		call	read
+ 165:	F724  FE00    		CP	00h		;any errors?
+ 166:	F726  C201F7  		JP	NZ,wboot	;retry the entire boot if an error occurs
+ 167:			;
+ 168:			;	no error, move to next sector
+ 169:	F729  E1      		pop	HL		;recall dma address
+ 170:	F72A  118000  		LD	DE, 128		;dma=dma+128
+ 171:	F72D  19      		ADD	HL,DE		;new dma address is in h, l
+ 172:	F72E  D1      		pop	DE		;recall sector address
+ 173:	F72F  C1      		pop	BC		;recall number of sectors remaining, and current trk
+ 174:	F730  05      		DEC	b		;sectors=sectors-1
+ 175:	F731  CA4AF7  		JP	Z,gocpm		;transfer to cp/m if all have been loaded
+ 176:			;
+ 177:			;	more	sectors remain to load, check for track change
+ 178:	F734  14      		INC	d
+ 179:	F735  7A      		LD 	a,d		;sector=64?, if so, change tracks
+ 180:	F736  FE40    		CP	64
+ 181:	F738  DA15F7  		JP	C,load1		;carry generated if sector<64
+ 182:			;
+ 183:			;	end of	current track,	go to next track
+ 184:	F73B  1600    		LD 	d,0		;begin with first sector of next track
+ 185:	F73D  0C      		INC	c		;track=track+1
+ 186:			;
+ 187:			;	save	register state, and change tracks
+ 188:	F73E  C5      		PUSH	BC
+ 189:	F73F  D5      		PUSH	DE
+ 190:	F740  E5      		PUSH	HL
+ 191:	F741  CDC1F7  		call	settrk		;track address set from register c
+ 192:	F744  E1      		pop	HL
+ 193:	F745  D1      		pop	DE
+ 194:	F746  C1      		pop	BC
+ 195:	F747  C315F7  		JP	load1		;for another sector
+ 196:			;
+ 197:			;	end of	load operation, set parameters and go to cp/m
+ 198:	F74A          	gocpm:
+ 199:	F74A  3EC3    		LD 	a, 0c3h		;c3 is a jmp instruction
+ 200:	F74C  320000  		LD	(0),A		;for jmp to wboot
+ 201:	F74F  2103F6  		LD	HL, wboote	;wboot entry point
+ 202:	F752  220100  		LD	(1),HL		;set address field for jmp at 0
+ 203:			;
+ 204:	F755  320500  		LD	(5),A		;for jmp to bdos
+ 205:	F758  2106E8  		LD	HL, bdos	;bdos entry point
+ 206:	F75B  220600  		LD	(6),HL		;address field of Jump at 5 to bdos
+ 207:			;
+ 208:	F75E  018000  		LD	BC, 80h		;default dma address is 80h
+ 209:	F761  CDD2F7  		call	setdma
+ 210:			;
+ 211:	F764  00      		nop; ei			;enable the interrupt system (@dj I don't think we should do this, there's no defined handler for interrupts)
+ 212:	F765  3A0400  		LD	A,(cdisk)	;get current disk number
+ 213:	F768  FE08    		cp	disks		;see if valid disk number
+ 214:	F76A  DA6FF7  		jp	c,diskok	;disk valid, go to ccp
+ 215:	F76D  3E00    		ld	a,0		;invalid disk, change to disk 0
+ 216:	F76F  4F      	diskok:	LD 	c, a		;send to the ccp
+ 217:	F770  C300E0  		JP	ccp		;go to cp/m for further processing
+ 218:			;
+ 219:			;
+ 220:			;	simple i/o handlers (must be filled in by user)
+ 221:			;	in each case, the entry point is provided, with space reserved
+ 222:			;	to insert your own code
+ 223:			;
+ 224:	F773          	const:	;console status, return 0ffh if character ready, 00h if not
+ 225:	F773  DB03    		in 	a,(3)		;get status
+ 226:	F775  E602    		and 	002h		;check RxRDY bit
+ 227:	F777  CA7DF7  		jp 	z,no_char
+ 228:	F77A  3EFF    		ld	a,0ffh		;char ready	
+ 229:	F77C  C9      		ret
+ 230:	F77D  3E00    	no_char:ld	a,00h		;no char
+ 231:	F77F  C9      		ret
+ 232:			;
+ 233:	F780          	conin:	;console character into register a
+ 234:	F780  DB03    		in 	a,(3)		;get status
+ 235:	F782  E602    		and 	002h		;check RxRDY bit
+ 236:	F784  CA80F7  		jp 	z,conin		;loop until char ready
+ 237:	F787  DB02    		in 	a,(2)		;get char
+ 238:	F789  E67F    		AND	7fh		;strip parity bit
+ 239:	F78B  C9      		ret
+ 240:			;
+ 241:	F78C          	conout:	;console character output from register c
+ 242:	F78C  DB03    		in	a,(3)
+ 243:	F78E  E601    		and	001h		;check TxRDY bit
+ 244:	F790  CA8CF7  		jp	z,conout	;loop until port ready
+ 245:	F793  79      		ld	a,c		;get the char
+ 246:	F794  D302    		out	(2),a		;out to port
+ 247:	F796  C9      		ret
+ 248:			;
+ 249:	F797          	list:	;list character from register c
+ 250:	F797  79      		LD 	a, c	  	;character to register a
+ 251:	F798  C9      		ret		  	;null subroutine
+ 252:			;
+ 253:	F799          	listst:	;return list status (0 if not ready, 1 if ready)
+ 254:	F799  AF      		XOR	a	 	;0 is always ok to return
+ 255:	F79A  C9      		ret
+ 256:			;
+ 257:	F79B          	punch:	;punch	character from	register C
+ 258:	F79B  79      		LD 	a, c		;character to register a
+ 259:	F79C  C9      		ret			;null subroutine
+ 260:			;
+ 261:			;
+ 262:	F79D          	reader:	;reader character into register a from reader device
+ 263:	F79D  3E1A    		LD     a, 1ah		;enter end of file for now (replace later)
+ 264:	F79F  E67F    		AND    7fh		;remember to strip parity bit
+ 265:	F7A1  C9      		ret
+ 266:			;
+ 267:			;
+ 268:			;	i/o drivers for the disk follow
+ 269:			;	for now, we will simply store the parameters away for use
+ 270:			;	in the read and write	subroutines
+ 271:			;
+ 272:	F7A2          	home:	;move to the track 00	position of current drive
+ 273:			;	translate this call into a settrk call with Parameter 00
+ 274:	F7A2  0E00    		LD     c, 0		;select track 0
+ 275:	F7A4  CDC1F7  		call   settrk
+ 276:	F7A7  C9      		ret			;we will move to 00 on first read/write
+ 277:			;
+ 278:	F7A8          	seldsk:	;select disk given by register c
+ 279:	F7A8  210000  		LD	HL, 0000h	;error return code
+ 280:	F7AB  79      		LD 	a, c
+ 281:	F7AC  3297F8  		LD	(diskno),A
+ 282:	F7AF  FE08    		CP	disks		;must be between 0 and 3
+ 283:	F7B1  D0      		RET	NC		;no carry if 4, 5,...
+ 284:			;	disk number is in the proper range
+ 285:			;	defs	10		;space for disk select -- not needed for modern hard disk
+ 286:			;	compute proper disk Parameter header address
+ 287:	F7B2  3A97F8  		LD	A,(diskno)
+ 288:	F7B5  6F      		LD 	l, a		;l=disk number 0, 1, 2, 3
+ 289:	F7B6  2600    		LD 	h, 0		;high order zero
+ 290:	F7B8  29      		ADD	HL,HL		;*2
+ 291:	F7B9  29      		ADD	HL,HL		;*4
+ 292:	F7BA  29      		ADD	HL,HL		;*8
+ 293:	F7BB  29      		ADD	HL,HL		;*16 (size of each header)
+ 294:	F7BC  1136F6  		LD	DE, dpbase
+ 295:	F7BF  19      		ADD	HL,DE		;hl=,dpbase (diskno*16) Note typo here in original source.
+ 296:	F7C0  C9      		ret
+ 297:			;
+ 298:	F7C1          	settrk:	;set track given by register c
+ 299:	F7C1  79      		LD 	a, c
+ 300:	F7C2  3291F8  		LD	(track),A
+ 301:	F7C5  C9      		ret
+ 302:			;
+ 303:	F7C6          	setsec:	;set sector given by register c
+ 304:	F7C6  79      		LD 	a, c
+ 305:	F7C7  3293F8  		LD	(sector),A
+ 306:	F7CA  C9      		ret
+ 307:			;
+ 308:			;
+ 309:	F7CB          	sectran:
+ 310:				;translate the sector given by bc using the
+ 311:				;translate table given by de
+ 312:	F7CB  EB      		EX	DE,HL		;hl=.trans
+ 313:	F7CC  09      		ADD	HL,BC		;hl=.trans (sector)
+ 314:	F7CD  C9      		ret			;debug no translation
+ 315:	F7CE  6E      		LD 	l, (hl)		;l=trans (sector)
+ 316:	F7CF  2600    		LD 	h, 0		;hl=trans (sector)
+ 317:	F7D1  C9      		ret			;with value in hl
+ 318:			;
+ 319:	F7D2          	setdma:	;set	dma address given by registers b and c
+ 320:	F7D2  69      		LD 	l, c		;low order address
+ 321:	F7D3  60      		LD 	h, b		;high order address
+ 322:	F7D4  2295F8  		LD	(dmaad),HL	;save the address
+ 323:	F7D7  C9      		ret
+ 324:			;
+ 325:			;	Subroutine to print greeting message
+ 326:			;	Address of zero-terminated string passed in HL
+ 327:	F7D8  3E00    	prmsg:	ld	a,0			;check if at end of string
+ 328:	F7DA  4E      		ld	c,(hl)
+ 329:	F7DB  B1      		or	c
+ 330:	F7DC  C8      		ret	z			;yes, return
+ 331:	F7DD  CD8CF7  		call	conout			;no, output character
+ 332:	F7E0  23      		inc	hl
+ 333:	F7E1  C3D8F7  		jp	prmsg
+ 334:			;
+ 335:			;
+ 336:	F7E4          	read:
+ 337:			;Read one CP/M sector from disk.
+ 338:			;Return a 00h in register a if the operation completes properly, and 01h if an error occurs during the read.
+ 339:			;Disk number in 'diskno'
+ 340:			;Track number in 'track'
+ 341:			;Sector number in 'sector'
+ 342:			;Dma address in 'dmaad' (0-65535)
+ 343:			;dj - todo, it should be possible to avoid a read if you already have the second
+ 344:			;128 byte sector inside an already loaded hstbuf
+ 345:			;	how to do this? 
+ 346:			;	if you are reading the same disk, same track, but previous sector+1, you can read
+ 347:			;	the second section of the hstbuf
+ 348:			;
+ 349:	F7E4  2118FD  				ld	hl,hstbuf		;buffer to place disk sector (256 bytes)
+ 350:	F7E7  DB0F    	rd_status_loop_1:	in	a,(0fh)			;check status
+ 351:	F7E9  E680    				and	80h			;check BSY bit
+ 352:	F7EB  C2E7F7  				jp	nz,rd_status_loop_1	;loop until not busy
+ 353:	F7EE  DB0F    	rd_status_loop_2:	in	a,(0fh)			;check	status
+ 354:	F7F0  E640    				and	40h			;check DRDY bit
+ 355:	F7F2  CAEEF7  				jp	z,rd_status_loop_2	;loop until ready
+ 356:	F7F5  3E01    				ld	a,01h			;number of sectors = 1
+ 357:	F7F7  D30A    				out	(0ah),a			;sector count register
+ 358:	F7F9  3A93F8  				ld	a,(sector)		;CP/M sector (0 to 127, 7 bits)
+ 359:	F7FC  D30B    				out	(0bh),a			;lba bits 0 - 7
+ 360:	F7FE  3A91F8  				ld	a,(track)		;CP/M track (0 to 255, 8 bits)
+ 361:	F801  D30C    				out	(0ch),a			;lba bits 8 - 15
+ 362:	F803  3A97F8  				ld	a,(diskno)			;(dj) upper bits with disk no
+ 363:	F806  D30D    				out	(0dh),a			;lba bits 16 - 23
+ 364:	F808  3EE0    				ld	a,11100000b		;LBA mode, select host drive 0
+ 365:	F80A  D30E    				out	(0eh),a			;drive/head register
+ 366:	F80C  3E20    				ld	a,20h			;Read sector command
+ 367:	F80E  D30F    				out	(0fh),a
+ 368:	F810  DB0F    	rd_wait_for_DRQ_set:	in	a,(0fh)			;read status
+ 369:	F812  E608    				and	08h			;DRQ bit
+ 370:	F814  CA10F8  				jp	z,rd_wait_for_DRQ_set	;loop until bit set
+ 371:	F817  DB0F    	rd_wait_for_BSY_clear:	in	a,(0fh)
+ 372:	F819  E680    				and	80h
+ 373:	F81B  C217F8  				jp	nz,rd_wait_for_BSY_clear
+ 374:	F81E  DB0F    				in	a,(0fh)			;clear INTRQ
+ 375:	F820  DB08    	read_loop:		in	a,(08h)			;get data
+ 376:	F822  77      				ld	(hl),a
+ 377:	F823  23      				inc	hl
+ 378:	F824  DB0F    				in	a,(0fh)			;check status
+ 379:	F826  E608    				and	08h			;DRQ bit
+ 380:	F828  C220F8  				jp	nz,read_loop		;loop until clear
+ 381:						
+ 382:						;copy from buffer using ldir
+ 383:	F82B  2118FD  				ld hl, hstbuf ;host buffer
+ 384:	F82E  ED5B95F8				ld de, (dmaad) ;memory location to place data read from disk
+ 385:	F832  018000  				ld bc, 128 ;size of CP/M sector
+ 386:	F835  EDB0    				ldir ;put in memory
+ 387:							
+ 388:	F837  DB0F    				in	a,(0fh)			;get status
+ 389:	F839  E601    				and	01h			;error bit
+ 390:	F83B  C9      				ret
+ 391:			
+ 392:	F83C          	write:
+ 393:			;Write one CP/M sector to disk.
+ 394:			;Return a 00h in register a if the operation completes properly, and 0lh if an error occurs during the read or write
+ 395:			;Disk number in 'diskno'
+ 396:			;Track number in 'track'
+ 397:			;Sector number in 'sector'
+ 398:			;Dma address in 'dmaad' (0-65535)
+ 399:			
+ 400:						;copy to buffer using ldir
+ 401:	F83C  2A95F8  				ld hl, (dmaad) ;source cp/m location
+ 402:	F83F  1118FD  				ld de, hstbuf ;host buffer
+ 403:	F842  018000  				ld bc, 128 ;size of CP/M sector
+ 404:	F845  EDB0    				ldir ;put into hst buffer
+ 405:			
+ 406:	F847  2118FD  				ld	hl,hstbuf		;location of data to write to disk
+ 407:	F84A  DB0F    	wr_status_loop_1:	in	a,(0fh)			;check status
+ 408:	F84C  E680    				and	80h			;check BSY bit
+ 409:	F84E  C24AF8  				jp	nz,wr_status_loop_1	;loop until not busy
+ 410:	F851  DB0F    	wr_status_loop_2:	in	a,(0fh)			;check	status
+ 411:	F853  E640    				and	40h			;check DRDY bit
+ 412:	F855  CA51F8  				jp	z,wr_status_loop_2	;loop until ready
+ 413:	F858  3E01    				ld	a,01h			;number of sectors = 1
+ 414:	F85A  D30A    				out	(0ah),a			;sector count register
+ 415:	F85C  3A93F8  				ld	a,(sector)		;CP/M sector (0 to 127, 7 bits)
+ 416:	F85F  D30B    				out	(0bh),a			;lba bits 0 - 7
+ 417:	F861  3A91F8  				ld	a,(track)		;CP/M track (0 to 255, 8 bits)
+ 418:	F864  D30C    				out	(0ch),a			;lba bits 8 - 15
+ 419:	F866  3A97F8  				ld	a, (diskno)			;upper bits to diskno (dj)
+ 420:	F869  D30D    				out	(0dh),a			;lba bits 16 - 23
+ 421:	F86B  3EE0    				ld	a,11100000b		;LBA mode, select drive 0
+ 422:	F86D  D30E    				out	(0eh),a			;drive/head register
+ 423:	F86F  3E30    				ld	a,30h			;Write sector command
+ 424:	F871  D30F    				out	(0fh),a
+ 425:	F873  DB0F    	wr_wait_for_DRQ_set:	in	a,(0fh)			;read status
+ 426:	F875  E608    				and	08h			;DRQ bit
+ 427:	F877  CA73F8  				jp	z,wr_wait_for_DRQ_set	;loop until bit set			
+ 428:	F87A  7E      	write_loop:		ld	a,(hl)
+ 429:	F87B  D308    				out	(08h),a			;write data
+ 430:	F87D  23      				inc	hl
+ 431:	F87E  DB0F    				in	a,(0fh)			;read status
+ 432:	F880  E608    				and	08h			;check DRQ bit
+ 433:	F882  C27AF8  				jp	nz,write_loop		;write until bit cleared
+ 434:	F885  DB0F    	wr_wait_for_BSY_clear:	in	a,(0fh)
+ 435:	F887  E680    				and	80h
+ 436:	F889  C285F8  				jp	nz,wr_wait_for_BSY_clear
+ 437:	F88C  DB0F    				in	a,(0fh)			;clear INTRQ
+ 438:	F88E  E601    				and	01h			;check for error
+ 439:	F890  C9      				ret
+ 440:			
+ 441:								
+ 442:			;
+ 443:			;	the remainder of the cbios is reserved uninitialized
+ 444:			;	data area, and does not need to be a Part of the
+ 445:			;	system	memory image (the space must be available,
+ 446:			;	however, between"begdat" and"enddat").
+ 447:			;
+ 448:	F891          	track:	defs	2		;two bytes for expansion
+ 449:	F893          	sector:	defs	2		;two bytes for expansion
+ 450:	F895          	dmaad:	defs	2		;direct memory address
+ 451:	F897          	diskno:	defs	1		;disk number 0-15
+ 452:			;
+ 453:			;	scratch ram area for bdos use
+ 454:	F898          	begdat:	equ	$	 	;beginning of data area
+ 455:	F898          	dirbf:	defs	128	 	;scratch directory area
+ 456:			;Allocation scratch areas, size of each must be (DSM/8)+1
+ 457:	F918          	all00:	defs	128	 	;allocation vector 0
+ 458:	F998          	all01:	defs	128	 	;allocation vector 1
+ 459:	FA18          	all02:	defs	128	 	;allocation vector 2
+ 460:	FA98          	all03:	defs	128	 	;allocation vector 3
+ 461:	FB18          	all04:	defs	128	 	;allocation vector 4
+ 462:	FB98          	all05:	defs	128	 	;allocation vector 5
+ 463:	FC18          	all06:	defs	128	 	;allocation vector 6
+ 464:	FC98          	all07:	defs	128	 	;allocation vector 7
+ 465:			
+ 466:			
+ 467:			;
+ 468:	FD18          	enddat:	equ	$	 	;end of data area
+ 469:	0480          	datsiz:	equ	$-begdat;	;size of data area
+ 470:	FD18          	hstbuf: ds	256		;buffer for host disk sector
+ 471:	0818          	bioslen: equ $-bios ; end bios
+ 472:	FE18          		end
+
+
+
+Statistics:
+
+     4	passes
+     0	jr promotions
+    65	symbols
+   657	bytes
+
+
+
+Symbol Table:
+
+all00           F918      63768
+all01           F998      63896
+all02           FA18      64024
+all03           FA98      64152
+all04           FB18      64280
+all05           FB98      64408
+all06           FC18      64536
+all07           FC98      64664
+bdos           =E806      59398
+begdat         =F898      63640
+bios           =F600      62976
+bioslen        = 818      2072
+boot            F6E6      63206
+ccp            =E000      57344
+cdisk          =04        4
+conin           F780      63360
+conout          F78C      63372
+const           F773      63347
+datsiz         = 480      1152
+dirbf           F898      63640
+diskno          F897      63639
+diskok          F76F      63343
+disks          =08        8
+dmaad           F895      63637
+dpbase          F636      63030
+dpblk           F6B6      63158
+enddat         =FD18      64792
+gocpm           F74A      63306
+greet           F6C5      63173
+home            F7A2      63394
+hstbuf          FD18      64792
+iobyte         =03        3
+list            F797      63383
+listst          F799      63385
+load1           F715      63253
+no_char         F77D      63357
+nsects         =2C        44
+org_bdos       =E806      59398
+org_bios       =F600      62976
+org_ccp        =E000      57344
+prmsg           F7D8      63448
+punch           F79B      63387
+rd_status_loop_1 F7E7      63463
+rd_status_loop_2 F7EE      63470
+rd_wait_for_BSY_clear F817      63511
+rd_wait_for_DRQ_set F810      63504
+read            F7E4      63460
+read_loop       F820      63520
+reader          F79D      63389
+rst38          =38        56
+sector          F893      63635
+sectran         F7CB      63435
+seldsk          F7A8      63400
+setdma          F7D2      63442
+setsec          F7C6      63430
+settrk          F7C1      63425
+track           F891      63633
+wboot           F701      63233
+wboote          F603      62979
+wr_status_loop_1 F84A      63562
+wr_status_loop_2 F851      63569
+wr_wait_for_BSY_clear F885      63621
+wr_wait_for_DRQ_set F873      63603
+write           F83C      63548
+write_loop      F87A      63610

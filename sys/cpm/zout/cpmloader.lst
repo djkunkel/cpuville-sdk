@@ -1,0 +1,112 @@
+   1:				;Retrieves CP/M image from disk and loads it in memory starting at E400h 
+   2:				;Uses calls to ROM routine for disk read.
+   3:				;Reads track 0, sectors 1 to 50
+   4:				;This program is loaded into LBA sector 0 of disk, read to loc. 0800h by ROM and executed.
+   5:     -	0900          	hstbuf: 	equ	0900h		;will put 256-byte raw sector here
+   6:     -	0294          	disk_read:	equ	0294h		;in 2K ROM
+   7:     -	F600          	cpm:		equ	0F600h		;CP/M cold start entry
+   8:     -	0800          			org	0800h
+   9:				;Read track 0, sectors 1 to 50
+  10:    0+7	0800  3E01    			ld	a,1		;starting sector -- sector 0 has cpm_loader
+  11:    7+13	0802  326E08  			ld	(sector),a
+  12:   20+10	0805  2100E0  			ld	hl,0E000h	;memory address to place image
+  13:   30+16	0808  227008  			ld	(dmaad),hl
+  14:   46+7	080B  3E00    			ld	a,0		;CP/M track
+  15:   53+13	080D  326F08  			ld	(track),a
+  16:   66+17	0810  CD4B08  	rd_trk_0_loop:	call	read
+  17:   83+13	0813  3A6E08  			ld	a,(sector)
+  18:   96+7	0816  FE32    			cp	50
+  19:  103+10	0818  CA2C08  			jp	z,done
+  20:  113+4	081B  3C      			inc	a
+  21:  117+13	081C  326E08  			ld	(sector),a
+  22:  130+16	081F  2A7008  			ld	hl,(dmaad)
+  23:  146+10	0822  118000  			ld	de,128
+  24:  156+11	0825  19      			add	hl,de
+  25:  167+16	0826  227008  			ld	(dmaad),hl
+  26:  183+10	0829  C31008  			jp	rd_trk_0_loop
+  27:  193+11	082C  D301    	done:	out	(1),a		;switch memory config to all-RAM
+  28:				
+  29:						;clear the lower memory for CP/M to simplify debugging, all the way up to the program currently running
+  30:  204+10	082E  210000  			ld hl,0
+  31:  214+10	0831  110100  			ld de,1
+  32:  224+10	0834  01FF07  			ld bc,$800-1
+  33:  234+10	0837  3600    			ld (hl),0
+  34:  244+16+5	0839  EDB0    			ldir
+  35:						
+  36:						;clear the memory after this program to the end of memory
+  37:  260+10	083B  217208  			ld hl, end_loader
+  38:  270+10	083E  117308  			ld de, end_loader+1
+  39:  280+10	0841  018DD7  			ld bc, $E000 - end_loader - 1 ; again, I can't do off by one in my head, so maybe skip a byte to keep from destroying cpm (seems right after testing)
+  40:  290+10	0844  3600    			ld (hl), 0
+  41:  300+16+5	0846  EDB0    			ldir
+  42:						; ld a, $FF
+  43:						; ld hl, $100
+  44:						; ld (hl), $0
+  45:						; clrmem_lp:
+  46:						; dec hl
+  47:						; dec a
+  48:						; ld (hl), $0
+  49:						; jnz clrmem_lp
+  50:				
+  51:						;clear all memory above 800?
+  52:				
+  53:				
+  54:				
+  55:  316+10	0848  C300F6  			jp	cpm
+  56:				
+  57:     -	084B          	read:
+  58:				;Read one CP/M sector from disk 0
+  59:				;Track number in 'track'
+  60:				;Sector number in 'sector'
+  61:				;Dma address (location in memory to place the CP/M sector) in 'dmaad' (0-65535)
+  62:				;
+  63:  326+10	084B  210009  				ld	hl,hstbuf		;buffer to place raw disk sector (256 bytes)
+  64:  336+13	084E  3A6E08  				ld	a,(sector)
+  65:  349+4	0851  4F      				ld	c,a			;LBA bits 0 to 7
+  66:  353+13	0852  3A6F08  				ld	a,(track)
+  67:  366+4	0855  47      				ld	b,a			;LBA bits 8 to 15
+  68:  370+7	0856  1E00    				ld	e,00h			;LBA bits 16 to 23
+  69:  377+17	0858  CD9402  				call	disk_read		;subroutine in ROM
+  70:				;Transfer top 128-bytes out of buffer to memory
+  71:  394+16	085B  2A7008  				ld	hl,(dmaad)		;memory location to place data read from disk
+  72:  410+10	085E  110009  				ld	de,hstbuf		;host buffer
+  73:  420+7	0861  0680    				ld	b,128			;size of CP/M sector
+  74:  427+7	0863  1A      	rd_sector_loop:		ld	a,(de)			;get byte from host buffer
+  75:  434+7	0864  77      				ld	(hl),a			;put in memory
+  76:  441+6	0865  23      				inc	hl
+  77:  447+6	0866  13      				inc	de
+  78:  453+8+5	0867  10FA    				djnz	rd_sector_loop		;put 128 bytes into memory
+  79:  461+11	0869  DB0F    				in	a,(0fh)			;get status
+  80:  472+7	086B  E601    				and	01h			;error bit
+  81:  479+10	086D  C9      				ret
+  82:     -	086E  00      	sector:		db	00h
+  83:     -	086F  00      	track:		db	00h
+  84:     -	0870  0000    	dmaad:		dw	0000h
+  85:				
+  86:     -	0872          	end_loader:
+  87:     -	0872          			end
+
+
+
+Statistics:
+
+     4	passes
+     0	jr promotions
+    11	symbols
+   114	bytes
+
+
+
+Symbol Table:
+
+cpm            =F600      62976
+disk_read      = 294      660
+dmaad            870      2160
+done             82C      2092
+end_loader       872      2162
+hstbuf         = 900      2304
+rd_sector_loop   863      2147
+rd_trk_0_loop    810      2064
+read             84B      2123
+sector           86E      2158
+track            86F      2159

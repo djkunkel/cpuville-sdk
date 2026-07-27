@@ -1,0 +1,95 @@
+   1:			;Putsys3 by Donn Stewart, June 2019
+   2:			
+   3:			;Copies the memory image of CP/M loaded at E000h onto track 0 of the first CP/M disk
+   4:			;Image size is <= 6400 bytes, so need to save 6400/128 = 50 sectors
+   5:			;For system with 64-sector tracks, image can all be on track 0
+   6:			;Load and run from ROM monitor
+   7:			
+   8:			
+   9:			;Modified Dec 2020 by DJ Kunkel for different memory addresses
+  10:			;Uses calls to cbios, in memory at F600h
+  11:			;Writes track 0, sectors 1 to 50 (sector 0 has cpm loader)
+  12:			
+  13:			;@dj reworked this to use offsets into the jump table for the CPM functions based on locations.asm
+  14:			;we should be able to convert to z88dk assembler and do these assemblies together, with the cavet that cbios overlaps intentionally with cpm
+  15:			
+  16:			;note that if the CBIOS's code actually ever extends much beyond its current end at F88E, this code might need to adjusted
+  17:			
+  18:			import locations.asm
+**** locations.asm ****
+   1:			;stores the locations in memory that the OS components will live at
+   2:			
+   3:			;we can use this unless any changes are made to the ccp or bdos that affect its length
+   4:			;the bios can grow unless it exceeds putsys.asm's ability to save it as it only saves 6400 bytes right now
+   5:			
+   6:			
+   7:	E000          	org_ccp:    equ     $E000
+   8:	E806          	org_bdos:   equ     org_ccp+$806
+   9:	F600          	org_bios:   equ     org_ccp+$1600
+  10:			
+**** putsys.asm ****
+  19:			
+  20:			
+  21:	F61B          	seldsk:		equ org_bios+(3*9);equ	$F7A5 		;pass disk no. in c
+  22:	F624          	setdma:		equ org_bios+(3*12);equ	$F7CF  	;pass address in bc
+  23:	F61E          	settrk:		equ org_bios+(3*10);equ	$F7BE		;pass track in reg C
+  24:	F621          	setsec:		equ org_bios+(3*11);		;pass sector in reg c
+  25:	F62A          	write:		equ org_bios+(3*14);equ	$F839		;write one CP/M sector to disk
+  26:	046F          	monitor_warm_start:	equ	046Fh	;Return to ROM monitor
+  27:	0800          			org	0800h
+  28:	0800  0E00    			ld	c,00h		;CP/M disk a
+  29:	0802  CD1BF6  			call	seldsk
+  30:			;Write track 0, sectors 1 to 50
+  31:	0805  3E01    			ld	a,1		;starting sector
+  32:	0807  324208  			ld	(sector),a
+  33:	080A  2100E0  			ld	hl,org_ccp	;memory address to start
+  34:	080D  224308  			ld	(address),hl
+  35:	0810  0E00    			ld	c,0		;CP/M track
+  36:	0812  CD1EF6  			call	settrk
+  37:	0815  3A4208  	wr_trk_0_loop:	ld	a,(sector)
+  38:	0818  4F      			ld	c,a		;CP/M sector
+  39:	0819  CD21F6  			call	setsec
+  40:	081C  ED4B4308			ld	bc,(address)	;memory location
+  41:	0820  CD24F6  			call	setdma
+  42:	0823  CD2AF6  			call	write
+  43:	0826  3A4208  			ld	a,(sector)
+  44:	0829  FE32    			cp	50
+  45:	082B  CA3F08  			jp	z,done
+  46:	082E  3C      			inc	a
+  47:	082F  324208  			ld	(sector),a
+  48:	0832  2A4308  			ld	hl,(address)
+  49:	0835  118000  			ld	de,128
+  50:	0838  19      			add	hl,de
+  51:	0839  224308  			ld	(address),hl
+  52:	083C  C31508  			jp	wr_trk_0_loop
+  53:	083F  C36F04  	done:		jp	monitor_warm_start
+  54:	0842  00      	sector:		db	00h
+  55:	0843  0000    	address:	dw	0000h
+  56:	0845          			end
+
+
+
+Statistics:
+
+     4	passes
+     0	jr promotions
+    13	symbols
+    69	bytes
+
+
+
+Symbol Table:
+
+address          843      2115
+done             83F      2111
+monitor_warm_start= 46F      1135
+org_bdos       =E806      59398
+org_bios       =F600      62976
+org_ccp        =E000      57344
+sector           842      2114
+seldsk         =F61B      63003
+setdma         =F624      63012
+setsec         =F621      63009
+settrk         =F61E      63006
+wr_trk_0_loop    815      2069
+write          =F62A      63018
