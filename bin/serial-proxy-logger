@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""serial-proxy-logger: transparently proxy bytes between a serial device
+and rx (XMODEM receiver), logging every transfer in hex with direction,
+timestamp, and ASCII decode. Designed for debugging cpmget/cpmput.
+
+Usage: serial-proxy-logger SERIAL_DEV OUTPUT_FILE [rx args...]
+
+The serial device is opened in raw mode. rx is run on a pty; bytes are
+shuttled between the serial device and the pty, with each chunk logged
+to stderr. rx's own stderr is preserved on the terminal.
+"""
+import os, pty, select, sys, time
+
+SERIAL_DEV = sys.argv[1]
+OUTPUT_FILE = sys.argv[2]
+RX_ARGS = sys.argv[3:] or ["-X", "-y", "-v"]
+
+# Open serial device in raw mode (no stty needed; caller should stty first).
+ser_fd = os.open(SERIAL_DEV, os.O_RDWR | os.O_NOCTTY)
+
+# Create a pty for rx to talk to.
+master, slave = pty.openpty()
+
+pid = os.fork()
+if pid == 0:
+    # Child: rx reads/writes the pty, stderr stays on the real terminal.
+    os.dup2(slave, 0)
+    os.dup2(slave, 1)
+    os.close(master)
+    os.close(slave)
+    os.close(ser_fd)
+    os.execvp("rx", ["rx"] + RX_ARGS + [OUTPUT_FILE])
+    os._exit(127)
+
+os.close(slave)
+
+def hexdump(data, direction):
+    ts = time.time()
+    hex_str = " ".join(f"{b:02x}" for b in data)
+    asc = "".join(chr(b) if 32 <= b < 127 else "." for b in data)
+    print(f"[{ts:.3f}] {direction} {len(data):3d}B: {hex_str}  |{asc}|",
+          file=sys.stderr, flush=True)
+
+try:
+    while True:
+        r, _, _ = select.select([ser_fd, master], [], [], 1.0)
+        if ser_fd in r:
+            try:
+                data = os.read(ser_fd, 1024)
+            except OSError:
+                break
+            if not data:
+                break
+            hexdump(data, "Z80->HOST")
+            os.write(master, data)
+        if master in r:
+            try:
+                data = os.read(master, 1024)
+            except OSError:
+                break
+            if not data:
+                break
+            hexdump(data, "HOST->Z80")
+            os.write(ser_fd, data)
+except KeyboardInterrupt:
+    pass
+finally:
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+    os.close(ser_fd)
+    os.close(master)

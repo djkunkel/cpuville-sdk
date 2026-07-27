@@ -1,21 +1,32 @@
 #!/bin/sh
-# cpmget FILE - receive a file from the Z80 over serial using the XMODEM
-# (classic checksum) protocol via rx. The sender on the Cpuvulle Z80
+# cpmget [-v] FILE - receive a file from the Z80 over serial using the
+# XMODEM (classic checksum) protocol. The sender on the Cpuvulle Z80
 # (e.g. PCPUT) must already be running and waiting for the initial NAK
 # handshake byte before invoking this.
 #
-# rx -X uses the XMODEM protocol. Without -c, it sends NAK to request
-# classic 8-bit checksum mode (matching pcput.asm's default path). The
-# sender (pcput.asm) also accepts 'C' for CRC mode, so this interops
-# with either variant, but we default to checksum for compatibility
-# with the original Christenson protocol.
+# Options:
+#   -v, --verbose, -t, --trace   log every byte transfer in hex to stderr
+#
+# The receiver is bin/xmodem-recv, a Python implementation that mirrors
+# pcput.asm's protocol exactly, including proper EOT acknowledgement
+# (which lrzsz's rx -X mishandles on this version).
 #
 # The serial port is configured to 8N1 raw at BAUD_RATE, matching
 # console.sh. SERIAL_DEV and BAUD_RATE are read from serial.conf.
 
 set -e
 
-[ $# -eq 1 ] || { printf 'usage: cpmget FILE\n' >&2; exit 2; }
+verbose=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -v|--verbose|-t|--trace) verbose=1; shift ;;
+    --) shift; break ;;
+    -*) printf 'cpmget: unknown option: %s\n' "$1" >&2; exit 2 ;;
+    *) break ;;
+  esac
+done
+
+[ $# -eq 1 ] || { printf 'usage: cpmget [-v] FILE\n' >&2; exit 2; }
 
 # Locate the project root (parent of this script's bin/ directory), allowing
 # for being invoked via PATH.
@@ -44,8 +55,13 @@ printf 'cpmget: %s <- %s (XMODEM)\n' "$1" "$SERIAL_DEV" >&2
 stty -F "$SERIAL_DEV" "$BAUD_RATE" raw -echo -echoe -echok -echoctl -echoke \
   cs8 -cstopb -parenb -ixon -ixoff
 
-# rx -X receives a single file via XMODEM. Without -c it sends NAK to
-# request classic checksum mode. -y overwrites any existing local file
-# with the same name. stdin/stdout are wired to the serial device so rx
-# can read the sender's frames and write back ACK/NAK handshakes.
-rx -X -y "$1" < "$SERIAL_DEV" > "$SERIAL_DEV"
+# xmodem-recv mirrors pcput.asm's XMODEM protocol exactly: NAK to start,
+# receive SOH/seq/~seq/128-byte/checksum frames, ACK good blocks, and
+# properly ACK the EOT to complete the transfer. -v enables hex tracing.
+if [ "$verbose" = 1 ]; then
+  printf 'cpmget: verbose tracing enabled\n' >&2
+  _xm_opts="-v"
+else
+  _xm_opts=""
+fi
+exec "$PROJECT_ROOT/bin/xmodem-recv" $_xm_opts "$SERIAL_DEV" "$1"

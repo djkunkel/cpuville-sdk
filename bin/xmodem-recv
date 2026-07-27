@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""xmodem-recv: XMODEM receiver (classic checksum mode) for the Cpuvulle Z80.
+
+Mirrors the protocol pcput.asm implements: NAK to start, receive SOH/seq/
+~seq/128-byte/checksum frames, ACK good blocks, NAK bad ones, and properly
+ACK the EOT to complete the transfer.
+
+Usage: xmodem-recv [-v] SERIAL_DEV OUTPUT_FILE
+
+Options:
+  -v   verbose: log every byte transfer with hex dump
+
+Protocol (classic checksum, matching pcput.asm default path):
+  1. Receiver sends NAK (0x15) to request checksum mode
+  2. Sender sends SOH(0x01) seq ~seq [128 bytes] checksum
+  3. Receiver verifies checksum, sends ACK (0x06) or NAK (0x15)
+  4. Sender sends EOT (0x04) after last block
+  5. Receiver sends ACK to confirm EOT, transfer complete
+"""
+import os, select, sys, time
+
+SOH = 0x01
+EOT = 0x04
+ACK = 0x06
+NAK = 0x15
+CAN = 0x18
+
+VERBOSE = False
+
+def log(msg):
+    if VERBOSE:
+        print(msg, file=sys.stderr, flush=True)
+
+def hexdump(data, direction):
+    if not VERBOSE:
+        return
+    ts = time.time()
+    hex_str = " ".join(f"{b:02x}" for b in data)
+    asc = "".join(chr(b) if 32 <= b < 127 else "." for b in data)
+    print(f"[{ts:.3f}] {direction} {len(data):3d}B: {hex_str}  |{asc}|",
+          file=sys.stderr, flush=True)
+
+def read_byte(fd, timeout_sec):
+    r, _, _ = select.select([fd], [], [], timeout_sec)
+    if not r:
+        return None
+    data = os.read(fd, 1)
+    if not data:
+        return None
+    return data[0]
+
+def read_exact(fd, n, timeout_sec):
+    buf = b""
+    while len(buf) < n:
+        b = read_byte(fd, timeout_sec)
+        if b is None:
+            return None
+        buf += bytes([b])
+    return buf
+
+def flush_input(fd, duration=0.3):
+    """Drain any pending bytes from the serial input buffer."""
+    total = 0
+    end = time.time() + duration
+    while time.time() < end:
+        r, _, _ = select.select([fd], [], [], 0.05)
+        if r:
+            data = os.read(fd, 1024)
+            if data:
+                total += len(data)
+                hexdump(data, "Z80->HOST (flushed)")
+                end = time.time() + duration  # extend if still getting data
+    if total:
+        log(f"flushed {total} stale bytes from input buffer")
+
+def main():
+    global VERBOSE
+    args = sys.argv[1:]
+    if args and args[0] == "-v":
+        VERBOSE = True
+        args = args[1:]
+    if len(args) != 2:
+        print("usage: xmodem-recv [-v] SERIAL_DEV OUTPUT_FILE", file=sys.stderr)
+        sys.exit(2)
+
+    serial_dev, output_file = args
+    ser_fd = os.open(serial_dev, os.O_RDWR | os.O_NOCTTY)
+
+    # Flush any stale data left in the serial buffer from a prior session.
+    flush_input(ser_fd)
+
+    # Send initial NAK to request classic checksum mode
+    os.write(ser_fd, bytes([NAK]))
+    hexdump(bytes([NAK]), "HOST->Z80")
+    log("sent initial NAK")
+
+    with open(output_file, "wb") as outf:
+        expected_seq = 1
+        errors = 0
+        max_errors = 10
+
+        while True:
+            first = read_byte(ser_fd, 10.0)
+            if first is None:
+                log("timeout waiting for SOH/EOT")
+                errors += 1
+                if errors >= max_errors:
+                    print("xmodem-recv: timeout, transfer incomplete", file=sys.stderr)
+                    sys.exit(1)
+                os.write(ser_fd, bytes([NAK]))
+                hexdump(bytes([NAK]), "HOST->Z80")
+                continue
+
+            hexdump(bytes([first]), "Z80->HOST")
+
+            if first == EOT:
+                os.write(ser_fd, bytes([ACK]))
+                hexdump(bytes([ACK]), "HOST->Z80")
+                log("EOT received, sent ACK, transfer complete")
+                print("xmodem-recv: transfer complete", file=sys.stderr)
+                return
+
+            if first == CAN:
+                log("sender sent CAN, transfer cancelled")
+                print("xmodem-recv: cancelled by sender", file=sys.stderr)
+                sys.exit(1)
+
+            if first != SOH:
+                # Not SOH/EOT — we're out of sync. Scan for the next
+                # SOH or EOT without NAKing (NAKing every stray byte
+                # cascades into more confusion).
+                log(f"out of sync: got {first:02x}, scanning for SOH/EOT")
+                while True:
+                    b = read_byte(ser_fd, 5.0)
+                    if b is None:
+                        errors += 1
+                        if errors >= max_errors:
+                            print("xmodem-recv: lost sync, too many errors", file=sys.stderr)
+                            sys.exit(1)
+                        os.write(ser_fd, bytes([NAK]))
+                        hexdump(bytes([NAK]), "HOST->Z80")
+                        break
+                    hexdump(bytes([b]), "Z80->HOST (scan)")
+                    if b == SOH or b == EOT:
+                        first = b
+                        break
+                if first != SOH:
+                    if first == EOT:
+                        os.write(ser_fd, bytes([ACK]))
+                        hexdump(bytes([ACK]), "HOST->Z80")
+                        log("EOT found during resync, sent ACK")
+                        print("xmodem-recv: transfer complete", file=sys.stderr)
+                        return
+                    continue
+
+            # Read seq, ~seq
+            header = read_exact(ser_fd, 2, 5.0)
+            if header is None:
+                log("timeout reading seq/~seq")
+                os.write(ser_fd, bytes([NAK]))
+                hexdump(bytes([NAK]), "HOST->Z80")
+                continue
+            hexdump(header, "Z80->HOST")
+            seq, nseq = header[0], header[1]
+
+            # Read 128 data bytes and checksum
+            data = read_exact(ser_fd, 128, 10.0)
+            if data is None:
+                log("timeout reading data block")
+                os.write(ser_fd, bytes([NAK]))
+                hexdump(bytes([NAK]), "HOST->Z80")
+                continue
+            hexdump(data, "Z80->HOST")
+
+            csum_byte = read_byte(ser_fd, 5.0)
+            if csum_byte is None:
+                log("timeout reading checksum")
+                os.write(ser_fd, bytes([NAK]))
+                hexdump(bytes([NAK]), "HOST->Z80")
+                continue
+            hexdump(bytes([csum_byte]), "Z80->HOST")
+
+            # Verify seq and ~seq
+            if (seq ^ nseq) != 0xFF:
+                log(f"seq error: {seq:02x} ~{nseq:02x}, block consumed, sending NAK")
+                os.write(ser_fd, bytes([NAK]))
+                hexdump(bytes([NAK]), "HOST->Z80")
+                continue
+
+            # Verify checksum
+            calc_csum = sum(data) & 0xFF
+            if calc_csum != csum_byte:
+                log(f"checksum error: got {csum_byte:02x}, calc {calc_csum:02x}, sending NAK")
+                os.write(ser_fd, bytes([NAK]))
+                hexdump(bytes([NAK]), "HOST->Z80")
+                continue
+
+            # Block is good
+            if seq == (expected_seq & 0xFF):
+                outf.write(data)
+                outf.flush()
+                log(f"block {seq} received and written ({len(data)} bytes)")
+                expected_seq += 1
+            elif seq == ((expected_seq - 1) & 0xFF):
+                log(f"block {seq} duplicate (already received), ACKing without writing")
+            else:
+                log(f"unexpected seq {seq}, expected {expected_seq & 0xFF}, writing anyway")
+                outf.write(data)
+                outf.flush()
+                expected_seq = seq + 1
+
+            os.write(ser_fd, bytes([ACK]))
+            hexdump(bytes([ACK]), "HOST->Z80")
+            errors = 0
+
+    os.close(ser_fd)
+
+if __name__ == "__main__":
+    main()
