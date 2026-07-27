@@ -39,13 +39,21 @@ z80/
 │   ├── loadmon       # load a .bin at 0x0800 (no run)
 │   ├── sendmon       # send raw bytes (for manual handshake)
 │   ├── cpmput        # send a file via XMODEM (sx) to a waiting receiver
-│   └── cpmget        # receive a file via XMODEM (rx) from a waiting sender
+│   ├── cpmget        # receive a file via XMODEM (xmodem-recv) from a sender
+│   ├── xmodem-recv   # Python XMODEM receiver (used by cpmget)
+│   └── serial-proxy-logger  # debug aid: hex-dump bytes on the serial line
 ├── sys/
-│   └── monitor/      # ROM monitor source + build.sh
+│   ├── monitor/      # ROM monitor source + build.sh
+│   └── cpm/          # CP/M 2.2 sources + PCPUT/PCGET XMODEM programs
 └── vendor/
     ├── zmac/         # upstream zmac source + build.sh
     └── z80asm/       # upstream z80asm source + build.sh
 ```
+
+> **See also:** [`PLAN.md`](PLAN.md) records design options for a
+> known friction point — the single serial port is shared between the
+> console terminal and file transfers (see
+> [Pitfalls](#pitfalls) below).
 
 ## Toolchain
 
@@ -129,17 +137,16 @@ etc.) that user programs may call.
 
 ## Loading and running programs
 
-Three host scripts automate talking to the monitor. All of them read
-`serial.conf` from the project root for the serial device and baud rate
-(defaults `/dev/ttyUSB0` and `76800`).
+The host scripts read `serial.conf` from the project root for the serial
+device and baud rate (defaults `/dev/ttyUSB0` and `76800`).
+
+### Monitor protocol (binary load + run)
 
 | Command     | Does what                                                    |
 |-------------|--------------------------------------------------------------|
 | `runmon F`  | Full handshake (`bload`, `0800`, length, bytes) then `run 0800`. |
 | `loadmon F` | Same handshake, but stops short of `run` (leaves it loaded). |
 | `sendmon F` | Just pipes the raw bytes to the serial port (for manual handshaking). |
-| `cpmput F`  | Sends `F` via XMODEM (classic checksum or CRC, auto-negotiated by `sx`). The receiver on the Z80 must already be waiting for an XMODEM transfer (e.g. a CP/M `PIP`/`LOAD` prompt) before invoking. |
-| `cpmget F`  | Receives `F` via XMODEM classic checksum (`rx -X`). The sender on the Z80 (e.g. `PCPUT file.ext`) must already be running and waiting for the initial NAK handshake byte before invoking. Overwrites any existing local `F`. |
 
 Typical loop during development:
 
@@ -147,9 +154,36 @@ Typical loop during development:
 bz80asm myprog.asm && runmon myprog.bin
 ```
 
-To watch monitor output / interact with the monitor by hand, run `./console.sh`
-(which reads `SERIAL_DEV` and `BAUD_RATE` from `serial.conf`) in a separate
-terminal.
+### XMODEM file transfer (CP/M ↔ host)
+
+`cpmput` and `cpmget` move files between the host and a CP/M program on
+the Z80 using the XMODEM protocol (classic 8-bit checksum mode, matching
+the `PCPUT`/`PCGET` programs in `sys/cpm/`).
+
+| Command        | Does what                                                              |
+|----------------|------------------------------------------------------------------------|
+| `cpmput F`     | Sends `F` via XMODEM (`sx`). The Z80 receiver (`PCGET`) must already be waiting for the transfer. |
+| `cpmget [-v] F`| Receives `F` via XMODEM (`xmodem-recv`). The Z80 sender (`PCPUT`) must already be running and waiting for the initial NAK. `-v` logs every byte in hex to stderr (useful for debugging protocol issues). Overwrites any existing local `F`. |
+
+Workflow:
+
+1. On the Z80 (via `console.sh`), run `PCGET file.ext` (to receive) or
+   `PCPUT file.ext` (to send). It prints "Start XMODEM file receive
+   now..." and waits.
+2. **Disconnect `console.sh`** (see [Pitfalls](#pitfalls)).
+3. On the host, run `cpmput file.ext` or `cpmget file.ext`.
+4. Reconnect `console.sh` to resume interaction.
+
+`cpmget` uses `bin/xmodem-recv` (a custom Python XMODEM receiver) rather
+than lrzsz's `rx -X`, because `rx -X` fails to ACK the EOT byte in
+classic checksum mode, causing `PCPUT` to report "No ACK received on
+EOT" and `rx` to discard the received file. `xmodem-recv` mirrors
+`pcput.asm`'s protocol exactly, including proper EOT acknowledgement,
+stale-buffer flushing, and resync-on-bad-frame without cascading NAKs.
+
+To watch monitor output / interact with the monitor by hand, run
+`./console.sh` (which reads `SERIAL_DEV` and `BAUD_RATE` from
+`serial.conf`) in a separate terminal.
 
 ## Writing your first program
 
@@ -177,6 +211,57 @@ bz80asm hello.asm
 runmon hello.bin
 ```
 
+## Pitfalls
+
+Lessons learned the hard way during development of this SDK.
+
+### Serial port is exclusive — close `console.sh` during transfers
+
+`/dev/ttyUSB0` is a single character device: the kernel hands each
+incoming byte to whichever process reads first. If `console.sh` (tio)
+is attached while `cpmget`/`cpmput` runs, **tio silently steals bytes
+from the transfer**, causing truncated files and spurious "transfer
+complete" reports (the Z80 sender exhausts its retries and sends EOT
+early). This exact failure lost 29 of 256 blocks during a 32K
+end-to-end test.
+
+**Always disconnect `console.sh` before running `cpmget`/`cpmput`,**
+then reconnect after. `runmon`/`loadmon`/`sendmon` are unaffected
+because they own the port for their whole lifetime.
+
+This friction is documented as a known issue with design options for a
+future fix in [`PLAN.md`](PLAN.md). The Cpuvulle Z80's M82C51A-2 UART
+provides only one serial port, so console and transfers cannot be
+split across two devices.
+
+### XMODEM padding — received files may be larger than the original
+
+XMODEM transmits data in fixed 128-byte blocks. `PCPUT` pads the final
+block with `0x1A` (CP/M EOF character) to fill the block. A 68-byte
+source file arrives as 128 bytes on the host; a 1024-byte file arrives
+as 1024 (already a multiple of 128). When verifying transfers with
+`cmp` or `sha256sum`, compare against the *padded* length or strip
+trailing `0x1A` bytes from the received file.
+
+### `rx -X` (lrzsz) does not work with `PCPUT` — use `cpmget`
+
+lrzsz 0.12.20's `rx -X` mishandles the EOT byte in classic checksum
+mode: it treats `0x04` (EOT) as a bad sector header instead of
+acknowledging it, so `PCPUT` never receives the final ACK, reports "No
+ACK received on EOT, but transfer is complete," and `rx` discards the
+file as incomplete. `cpmget` uses `bin/xmodem-recv` (custom Python
+receiver) instead, which correctly ACKs the EOT. Don't substitute
+`rx -X` directly.
+
+### Stale bytes in the serial buffer
+
+If a previous transfer failed or was interrupted, leftover bytes may
+remain in the serial input buffer. The next `cpmget` will see them as
+garbage at the start of the stream. `xmodem-recv` flushes the input
+buffer on startup and resyncs on bad frames, but if you see a block-1
+retry in `-v` mode, this is the likely cause — not an actual line
+error.
+
 ## Notes
 
 - `env.sh` must be **sourced**, not executed: `. ./env.sh` (or
@@ -185,3 +270,10 @@ runmon hello.bin
   works: `bz80asm foo.z80` → `foo.bin`, `foo.lst`.
 - The vendored `z80asm` is GPLv3; `zmac` has its own license — see
   `vendor/<tool>/src/` for the upstream COPYING/LICENSE files.
+- `cpmget -v` enables byte-level hex tracing to stderr, showing every
+  byte transferred in both directions with timestamps. Useful for
+  diagnosing protocol issues or counting retries.
+- `bin/serial-proxy-logger` is a standalone debug tool that proxies
+  bytes between the serial device and an XMODEM program, hex-dumping
+  each chunk. Not used by the normal workflow but available for
+  protocol debugging.
