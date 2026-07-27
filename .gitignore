@@ -1,7 +1,6 @@
 # Build artifacts
 *.o
 *.bin
-*.lst
 *.cim
 *.rom
 *.hex
@@ -12,9 +11,9 @@ core
 *~
 \#*
 
-# Vendored tool build outputs (binaries built into bin/ by build.sh)
-/bin/zmac
-/bin/z80asm
+# # Vendored tool build outputs (binaries built into bin/ by build.sh)
+# /bin/zmac
+# /bin/z80asm
 
 # Vendored source build intermediates
 /vendor/zmac/src/zmac

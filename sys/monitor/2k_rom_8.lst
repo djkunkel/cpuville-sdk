@@ -1,0 +1,704 @@
+# File 2k_rom_8.asm
+0000			;ROM monitor for a system with serial interface and IDE disk and memory expansion board. 
+0000			;The disk extension board has 64K RAM -- computer board memory decoder disabled (J2 off). 
+0000			;The disk extension board uses ports 2 and 3 for the serial interface, and 8 to 15 for the disk 
+0000			;Therefore the computer board I/O decoder is also disabled (J1 off) 
+0000			;Output to port 0 will cause memory configuration flip-flop to activate 2K ROM 0000-07FF with 62K RAM 0800-FFFF 
+0000			;Output to port 1 will cause memory configuration flip-flop to activate all RAM 0000-FFFF 
+0000			; 
+0000						org	00000h 
+0000 c3 63 04					jp 	monitor_cold_start			 
+0003			; 
+0003			;The following code is for a system with a serial port. 
+0003			;Assumes the UART data port address is 02h and control/status address is 03h 
+0003			; 
+0003			;The subroutines for the serial port use these variables in RAM: 
+0003			current_location:	equ	0xdb00		;word variable in RAM 
+0003			line_count:		equ	0xdb02		;byte variable in RAM 
+0003			byte_count:		equ	0xdb03		;byte variable in RAM 
+0003			value_pointer:		equ	0xdb04		;word variable in RAM 
+0003			current_value:		equ	0xdb06		;word variable in RAM 
+0003			buffer:			equ	0xdb08		;buffer in RAM -- up to stack area 
+0003			;Need to have stack in upper RAM, but not in area of CP/M or RAM monitor. 
+0003			ROM_monitor_stack:	equ	0xdbff		;upper TPA in RAM, below RAM monitor 
+0003			; 
+0003			;Subroutine to initialize serial port UART 
+0003			;Needs to be called only once after computer comes out of reset. 
+0003			;If called while port is active will cause port to fail. 
+0003			;16x = 9600 baud 
+0003 3e 4e		initialize_port:	ld 	a,04eh			;1 stop bit, no parity, 8-bit char, 16x baud 
+0005 d3 03					out 	(3),a			;write to control port 
+0007 3e 37					ld 	a,037h			;enable receive and transmit 
+0009 d3 03					out 	(3),a			;write to control port 
+000b c9						ret 
+000c			; 
+000c			;Puts a single char (byte value) on serial output 
+000c			;Call with char to send in A register. Uses B register 
+000c 47			write_char:		ld	b,a			;store char 
+000d db 03		write_char_loop:	in	a,(3)			;check if OK to send 
+000f e6 01					and	001h			;check TxRDY bit 
+0011 ca 0d 00					jp 	z,write_char_loop	;loop if not set 
+0014 78						ld 	a,b			;get char back 
+0015 d3 02					out 	(2),a			;send to output 
+0017 c9						ret				;returns with char in a 
+0018			; 
+0018			;Subroutine to write a zero-terminated string to serial output 
+0018			;Pass address of string in HL register 
+0018			;No error checking 
+0018 db 03		write_string:		in 	a,(3)			;read status 
+001a e6 01					and 	001h			;check TxRDY bit 
+001c ca 18 00					jp 	z,write_string		;loop if not set 
+001f 7e						ld 	a,(hl)			;get char from string 
+0020 a7						and 	a			;check if 0 
+0021 c8						ret 	z			;yes, finished 
+0022 d3 02					out 	(2),a			;no, write char to output 
+0024 23						inc 	hl			;next char in string 
+0025 c3 18 00					jp 	write_string		;start over 
+0028			; 
+0028			;Binary loader. Receive a binary file, place in memory. 
+0028			;Address of load passed in HL, length of load (= file length) in BC 
+0028 db 03		bload:			in 	a,(3)			;get status 
+002a e6 02					and 	002h			;check RxRDY bit 
+002c ca 28 00					jp 	z,bload			;not ready, loop 
+002f db 02					in	a,(2) 
+0031 77						ld	(hl),a 
+0032 23						inc	hl 
+0033 0b						dec	bc			;byte counter 
+0034 78						ld	a,b			;need to test BC this way because 
+0035 b1						or	c			;dec rp instruction does not change flags 
+0036 c2 28 00					jp	nz,bload 
+0039 c9						ret 
+003a			; 
+003a			;Binary dump to port. Send a stream of binary data from memory to serial output 
+003a			;Address of dump passed in HL, length of dump in BC 
+003a db 03		bdump:			in 	a,(3)			;get status 
+003c e6 01					and 	001h			;check TxRDY bit 
+003e ca 3a 00					jp 	z,bdump			;not ready, loop 
+0041 7e						ld	a,(hl) 
+0042 d3 02					out	(2),a 
+0044 23						inc	hl 
+0045 0b						dec	bc 
+0046 78						ld	a,b			;need to test this way because 
+0047 b1						or	c			;dec rp instruction does not change flags 
+0048 c2 3a 00					jp	nz,bdump 
+004b c9						ret 
+004c			; 
+004c			;Subroutine to get a string from serial input, place in buffer. 
+004c			;Buffer address passed in HL reg. 
+004c			;Uses A,BC,DE,HL registers (including calls to other subroutines). 
+004c			;Line entry ends by hitting return key. Return char not included in string (replaced by zero). 
+004c			;Backspace editing OK. No error checking. 
+004c			; 
+004c 0e 00		get_line:		ld	c,000h			;line position 
+004e 7c						ld	a,h			;put original buffer address in de 
+004f 57						ld	d,a			;after this don't need to preserve hl 
+0050 7d						ld	a,l			;subroutines called don't use de 
+0051 5f						ld	e,a 
+0052 db 03		get_line_next_char:	in 	a,(3)			;get status 
+0054 e6 02					and 	002h			;check RxRDY bit 
+0056 ca 52 00					jp 	z,get_line_next_char	;not ready, loop 
+0059 db 02					in 	a,(2)			;get char 
+005b fe 0d					cp	00dh			;check if return 
+005d c8						ret	z			;yes, normal exit 
+005e fe 7f					cp	07fh			;check if backspace (VT102 keys) 
+0060 ca 74 00					jp	z,get_line_backspace	;yes, jump to backspace routine 
+0063 fe 08					cp	008h			;check if backspace (ANSI keys) 
+0065 ca 74 00					jp	z,get_line_backspace	;yes, jump to backspace 
+0068 cd 0c 00					call	write_char		;put char on screen 
+006b 12						ld	(de),a			;store char in buffer 
+006c 13						inc	de			;point to next space in buffer 
+006d 0c						inc	c			;inc counter 
+006e 3e 00					ld	a,000h 
+0070 12						ld	(de),a			;leaves a zero-terminated string in buffer 
+0071 c3 52 00					jp	get_line_next_char 
+0074 79			get_line_backspace:	ld	a,c			;check current position in line 
+0075 fe 00					cp	000h			;at beginning of line? 
+0077 ca 52 00					jp	z,get_line_next_char	;yes, ignore backspace, get next char 
+007a 1b						dec	de			;no, erase char from buffer 
+007b 0d						dec	c			;back up one 
+007c 3e 00					ld	a,000h			;put a zero in buffer where the last char was 
+007e 12						ld	(de),a 
+007f 21 84 03					ld	hl,erase_char_string	;ANSI sequence to delete one char from line 
+0082 cd 18 00					call	write_string		;transmits sequence to backspace and erase char 
+0085 c3 52 00					jp	get_line_next_char 
+0088			; 
+0088			;Creates a two-char hex string from the byte value passed in register A 
+0088			;Location to place string passed in HL 
+0088			;String is zero-terminated, stored in 3 locations starting at HL 
+0088			;Also uses registers b,d, and e 
+0088 47			byte_to_hex_string:	ld	b,a			;store original byte 
+0089 cb 3f					srl	a			;shift right 4 times, putting 
+008b cb 3f					srl	a			;high nybble in low-nybble spot 
+008d cb 3f					srl	a			;and zeros in high-nybble spot 
+008f cb 3f					srl	a 
+0091 16 00					ld	d,000h			;prepare for 16-bit addition 
+0093 5f						ld	e,a			;de contains offset 
+0094 e5						push	hl			;temporarily store string target address 
+0095 21 ee 00					ld	hl,hex_char_table	;use char table to get high-nybble character 
+0098 19						add	hl,de			;add offset to start of table 
+0099 7e						ld	a,(hl)			;get char 
+009a e1						pop	hl			;get string target address 
+009b 77						ld	(hl),a			;store first char of string 
+009c 23						inc	hl			;point to next string target address 
+009d 78						ld	a,b			;get original byte back from reg b 
+009e e6 0f					and	00fh			;mask off high-nybble 
+00a0 5f						ld	e,a			;d still has 000h, now de has offset 
+00a1 e5						push	hl			;temp store string target address 
+00a2 21 ee 00					ld	hl,hex_char_table	;start of table 
+00a5 19						add	hl,de			;add offset 
+00a6 7e						ld	a,(hl)			;get char 
+00a7 e1						pop	hl			;get string target address 
+00a8 77						ld	(hl),a			;store second char of string 
+00a9 23						inc	hl			;point to third location 
+00aa 3e 00					ld	a,000h			;zero to terminate string 
+00ac 77						ld	(hl),a			;store the zero 
+00ad c9						ret				;done 
+00ae			; 
+00ae			;Converts a single ASCII hex char to a nybble value 
+00ae			;Pass char in reg A. Letter numerals must be upper case. 
+00ae			;Return nybble value in low-order reg A with zeros in high-order nybble if no error. 
+00ae			;Return 0ffh in reg A if error (char not a valid hex numeral). 
+00ae			;Also uses b, c, and hl registers. 
+00ae 21 ee 00		hex_char_to_nybble:	ld	hl,hex_char_table 
+00b1 06 0f					ld	b,00fh			;no. of valid characters in table - 1. 
+00b3 0e 00					ld	c,000h			;will be nybble value 
+00b5 be			hex_to_nybble_loop:	cp	(hl)			;character match here? 
+00b6 ca c2 00					jp	z,hex_to_nybble_ok	;match found, exit 
+00b9 05						dec	b			;no match, check if at end of table 
+00ba fa c4 00					jp	m,hex_to_nybble_err	;table limit exceded, exit with error 
+00bd 0c						inc	c			;still inside table, continue search 
+00be 23						inc	hl 
+00bf c3 b5 00					jp	hex_to_nybble_loop 
+00c2 79			hex_to_nybble_ok:	ld	a,c			;put nybble value in a 
+00c3 c9						ret 
+00c4 3e ff		hex_to_nybble_err:	ld	a,0ffh			;error value 
+00c6 c9						ret 
+00c7			; 
+00c7			;Converts a hex character pair to a byte value 
+00c7			;Called with location of high-order char in HL 
+00c7			;If no error carry flag clear, returns with byte value in register A, and 
+00c7			;HL pointing to next mem location after char pair. 
+00c7			;If error (non-hex char) carry flag set, HL pointing to invalid char 
+00c7 7e			hex_to_byte:		ld	a,(hl)			;location of character pair 
+00c8 e5						push	hl			;store hl (hex_char_to_nybble uses it) 
+00c9 cd ae 00					call	hex_char_to_nybble 
+00cc e1						pop	hl			;returns with nybble value in a reg, or 0ffh if error 
+00cd fe ff					cp	0ffh			;non-hex character? 
+00cf ca ec 00					jp	z,hex_to_byte_err	;yes, exit with error 
+00d2 cb 27					sla	a			;no, move low order nybble to high side 
+00d4 cb 27					sla	a 
+00d6 cb 27					sla	a 
+00d8 cb 27					sla	a 
+00da 57						ld	d,a			;store high-nybble 
+00db 23						inc	hl			;get next character of the pair 
+00dc 7e						ld	a,(hl) 
+00dd e5						push	hl			;store hl 
+00de cd ae 00					call	hex_char_to_nybble 
+00e1 e1						pop	hl 
+00e2 fe ff					cp	0ffh			;non-hex character? 
+00e4 ca ec 00					jp	z,hex_to_byte_err	;yes, exit with error 
+00e7 b2						or	d			;no, combine with high-nybble 
+00e8 23						inc	hl			;point to next memory location after char pair 
+00e9 37						scf 
+00ea 3f						ccf				;no-error exit (carry = 0) 
+00eb c9						ret 
+00ec 37			hex_to_byte_err:	scf				;error, carry flag set 
+00ed c9						ret 
+00ee ..			hex_char_table:		defm	"0123456789ABCDEF"	;ASCII hex table 
+00fe			; 
+00fe			;Subroutine to get a two-byte address from serial input. 
+00fe			;Returns with address value in HL 
+00fe			;Uses locations in RAM for buffer and variables 
+00fe 21 08 db		address_entry:		ld	hl,buffer		;location for entered string 
+0101 cd 4c 00					call	get_line		;returns with address string in buffer 
+0104 21 08 db					ld	hl,buffer		;location of stored address entry string 
+0107 cd c7 00					call	hex_to_byte		;will get high-order byte first 
+010a da 20 01					jp	c, address_entry_error	;if error, jump 
+010d 32 01 db					ld	(current_location+1),a	;store high-order byte, little-endian 
+0110 21 0a db					ld	hl,buffer+2		;point to low-order hex char pair 
+0113 cd c7 00					call	hex_to_byte		;get low-order byte 
+0116 da 20 01					jp	c, address_entry_error	;jump if error 
+0119 32 00 db					ld	(current_location),a	;store low-order byte in lower memory 
+011c 2a 00 db					ld	hl,(current_location)	;put memory address in hl 
+011f c9						ret 
+0120 21 c2 03		address_entry_error:	ld	hl,address_error_msg 
+0123 cd 18 00					call	write_string 
+0126 c3 fe 00					jp	address_entry 
+0129			; 
+0129			;Subroutine to get a decimal string, return a word value 
+0129			;Calls decimal_string_to_word subroutine 
+0129 21 08 db		decimal_entry:		ld	hl,buffer 
+012c cd 4c 00					call	get_line		;returns with DE pointing to terminating zero 
+012f 21 08 db					ld	hl,buffer 
+0132 cd 3f 01					call	decimal_string_to_word 
+0135 d0						ret	nc			;no error, return with word in hl 
+0136 21 36 04					ld	hl,decimal_error_msg	;error, try again 
+0139 cd 18 00					call	write_string 
+013c c3 29 01					jp	decimal_entry 
+013f			; 
+013f			;Subroutine to convert a decimal string to a word value 
+013f			;Call with address of string in HL, pointer to end of string in DE 
+013f			;Carry flag set if error (non-decimal char) 
+013f			;Carry flag clear, word value in HL if no error. 
+013f 42			decimal_string_to_word:	ld	b,d 
+0140 4b						ld	c,e			;use BC as string pointer 
+0141 22 00 db					ld	(current_location),hl	;store addr. of start of buffer in RAM word variable 
+0144 21 00 00					ld	hl,000h			;starting value zero 
+0147 22 06 db					ld	(current_value),hl 
+014a 21 8f 01					ld	hl,decimal_place_value	;pointer to values 
+014d 22 04 db					ld	(value_pointer),hl 
+0150 0b			decimal_next_char:	dec	bc			;next char in string (moving right to left) 
+0151 2a 00 db					ld	hl,(current_location)	;check if at end of decimal string 
+0154 37						scf				;get ready to subtract de from buffer addr. 
+0155 3f						ccf				;set carry to zero (clear) 
+0156 ed 42					sbc	hl,bc			;keep going if bc > or = hl (buffer address) 
+0158 da 64 01					jp	c,decimal_continue	;borrow means bc > hl 
+015b ca 64 01					jp	z,decimal_continue	;z means bc = hl 
+015e 2a 06 db					ld	hl,(current_value)	;return if de < buffer address (no borrow) 
+0161 37						scf				;get value back from RAM variable 
+0162 3f						ccf 
+0163 c9						ret				;return with carry clear, value in hl 
+0164 0a			decimal_continue:	ld	a,(bc)			;next char in string (right to left) 
+0165 d6 30					sub	030h			;ASCII value of zero char 
+0167 fa 8a 01					jp	m,decimal_error		;error if char value less than 030h 
+016a fe 0a					cp	00ah			;error if byte value > or = 10 decimal 
+016c f2 8a 01					jp	p,decimal_error		;a reg now has value of decimal numeral 
+016f 2a 04 db					ld	hl,(value_pointer)	;get value to add an put in de 
+0172 5e						ld	e,(hl)			;little-endian (low byte in low memory) 
+0173 23						inc	hl 
+0174 56						ld	d,(hl) 
+0175 23						inc	hl			;hl now points to next value 
+0176 22 04 db					ld	(value_pointer),hl 
+0179 2a 06 db					ld	hl,(current_value)	;get back current value 
+017c 3d			decimal_add:		dec	a			;add loop to increase total value 
+017d fa 84 01					jp	m,decimal_add_done	;end of multiplication 
+0180 19						add	hl,de 
+0181 c3 7c 01					jp	decimal_add 
+0184 22 06 db		decimal_add_done:	ld	(current_value),hl 
+0187 c3 50 01					jp	decimal_next_char 
+018a 37			decimal_error:		scf 
+018b c9						ret 
+018c c3 7c 01					jp	decimal_add 
+018f 01 00 0a 00 64 00 e8 03 10 27	decimal_place_value:	defw	1,10,100,1000,10000 
+0199			; 
+0199			;Memory dump 
+0199			;Displays a 256-byte block of memory in 16-byte rows. 
+0199			;Called with address of start of block in HL 
+0199 22 00 db		memory_dump:		ld	(current_location),hl	;store address of block to be displayed 
+019c 3e 00					ld	a,000h 
+019e 32 03 db					ld	(byte_count),a		;initialize byte count 
+01a1 32 02 db					ld	(line_count),a		;initialize line count 
+01a4 c3 d9 01					jp	dump_new_line 
+01a7 2a 00 db		dump_next_byte:		ld	hl,(current_location)	;get byte address from storage, 
+01aa 7e						ld	a,(hl)			;get byte to be converted to string 
+01ab 23						inc	hl			;increment address and 
+01ac 22 00 db					ld	(current_location),hl	;store back 
+01af 21 08 db					ld	hl,buffer		;location to store string 
+01b2 cd 88 00					call	byte_to_hex_string	;convert 
+01b5 21 08 db					ld	hl,buffer		;display string 
+01b8 cd 18 00					call	write_string 
+01bb 3a 03 db					ld	a,(byte_count)		;next byte 
+01be 3c						inc	a 
+01bf ca 09 02					jp	z,dump_done		;stop when 256 bytes displayed 
+01c2 32 03 db					ld	(byte_count),a		;not finished yet, store 
+01c5 3a 02 db					ld	a,(line_count)		;end of line (16 characters)? 
+01c8 fe 0f					cp	00fh			;yes, start new line 
+01ca ca d9 01					jp	z,dump_new_line 
+01cd 3c						inc	a			;no, increment line count 
+01ce 32 02 db					ld	(line_count),a 
+01d1 3e 20					ld	a,020h			;print space 
+01d3 cd 0c 00					call	write_char 
+01d6 c3 a7 01					jp	dump_next_byte		;continue 
+01d9 3e 00		dump_new_line:		ld	a,000h			;reset line count to zero 
+01db 32 02 db					ld	(line_count),a			 
+01de cd 89 02					call	write_newline 
+01e1 2a 00 db					ld	hl,(current_location)	;location of start of line 
+01e4 7c						ld	a,h			;high byte of address 
+01e5 21 08 db					ld	hl, buffer 
+01e8 cd 88 00					call	byte_to_hex_string	;convert 
+01eb 21 08 db					ld	hl,buffer 
+01ee cd 18 00					call	write_string		;write high byte 
+01f1 2a 00 db					ld	hl,(current_location) 
+01f4 7d						ld	a,l			;low byte of address 
+01f5 21 08 db					ld	hl, buffer 
+01f8 cd 88 00					call	byte_to_hex_string	;convert 
+01fb 21 08 db					ld	hl,buffer 
+01fe cd 18 00					call	write_string		;write low byte 
+0201 3e 20					ld	a,020h			;space 
+0203 cd 0c 00					call	write_char 
+0206 c3 a7 01					jp	dump_next_byte		;now write 16 bytes 
+0209 3e 00		dump_done:		ld	a,000h 
+020b 21 08 db					ld	hl,buffer 
+020e 77						ld	(hl),a			;clear buffer of last string 
+020f cd 89 02					call	write_newline 
+0212 c9						ret 
+0213			; 
+0213			;Memory load 
+0213			;Loads RAM memory with bytes entered as hex characters 
+0213			;Called with address to start loading in HL 
+0213			;Displays entered data in 16-byte rows. 
+0213 22 00 db		memory_load:		ld	(current_location),hl 
+0216 21 ee 03					ld	hl,data_entry_msg 
+0219 cd 18 00					call	write_string 
+021c c3 66 02					jp	load_new_line 
+021f cd 7f 02		load_next_char:		call	get_char 
+0222 fe 0d					cp	00dh			;return? 
+0224 ca 7b 02					jp	z,load_done		;yes, quit 
+0227 32 08 db					ld	(buffer),a 
+022a cd 7f 02					call	get_char 
+022d fe 0d					cp	00dh			;return? 
+022f ca 7b 02					jp	z,load_done		;yes, quit 
+0232 32 09 db					ld	(buffer+1),a 
+0235 21 08 db					ld	hl,buffer 
+0238 cd c7 00					call	hex_to_byte 
+023b da 71 02					jp	c,load_data_entry_error	;non-hex character 
+023e 2a 00 db					ld	hl,(current_location)	;get byte address from storage, 
+0241 77						ld	(hl),a			;store byte 
+0242 23						inc	hl			;increment address and 
+0243 22 00 db					ld	(current_location),hl	;store back 
+0246 3a 08 db					ld	a,(buffer) 
+0249 cd 0c 00					call	write_char 
+024c 3a 09 db					ld	a,(buffer+1) 
+024f cd 0c 00					call	write_char 
+0252 3a 02 db					ld	a,(line_count)		;end of line (16 characters)? 
+0255 fe 0f					cp	00fh			;yes, start new line 
+0257 ca 66 02					jp	z,load_new_line 
+025a 3c						inc	a			;no, increment line count 
+025b 32 02 db					ld	(line_count),a 
+025e 3e 20					ld	a,020h			;print space 
+0260 cd 0c 00					call	write_char 
+0263 c3 1f 02					jp	load_next_char		;continue 
+0266 3e 00		load_new_line:		ld	a,000h			;reset line count to zero 
+0268 32 02 db					ld	(line_count),a 
+026b cd 89 02					call	write_newline 
+026e c3 1f 02					jp	load_next_char		;continue 
+0271 cd 89 02		load_data_entry_error:	call	write_newline 
+0274 21 1b 04					ld	hl,data_error_msg 
+0277 cd 18 00					call	write_string 
+027a c9						ret 
+027b cd 89 02		load_done:		call	write_newline 
+027e c9						ret 
+027f			; 
+027f			;Get one ASCII character from the serial port. 
+027f			;Returns with char in A reg. No error checking. 
+027f db 03		get_char:		in 	a,(3)			;get status 
+0281 e6 02					and 	002h			;check RxRDY bit 
+0283 ca 7f 02					jp 	z,get_char		;not ready, loop 
+0286 db 02					in 	a,(2)			;get char 
+0288 c9						ret 
+0289			; 
+0289			;Subroutine to start a new line 
+0289 3e 0d		write_newline:		ld	a,00dh			;ASCII carriage return character 
+028b cd 0c 00					call	write_char 
+028e 3e 0a					ld	a,00ah			;new line (line feed) character 
+0290 cd 0c 00					call	write_char 
+0293 c9						ret 
+0294			; 
+0294			;Subroutine to read one disk sector (256 bytes) 
+0294			;Address to place data passed in HL 
+0294			;LBA bits 0 to 7 passed in C, bits 8 to 15 passed in B 
+0294			;LBA bits 16 to 23 passed in E 
+0294			disk_read: 
+0294 db 0f		rd_status_loop_1:	in	a,(0fh)		;check status 
+0296 e6 80					and	80h		;check BSY bit 
+0298 c2 94 02					jp	nz,rd_status_loop_1	;loop until not busy 
+029b db 0f		rd_status_loop_2:	in	a,(0fh)		;check	status 
+029d e6 40					and	40h		;check DRDY bit 
+029f ca 9b 02					jp	z,rd_status_loop_2	;loop until ready 
+02a2 3e 01					ld	a,01h		;number of sectors = 1 
+02a4 d3 0a					out	(0ah),a		;sector count register 
+02a6 79						ld	a,c 
+02a7 d3 0b					out	(0bh),a		;lba bits 0 - 7 
+02a9 78						ld	a,b 
+02aa d3 0c					out	(0ch),a		;lba bits 8 - 15 
+02ac 7b						ld	a,e 
+02ad d3 0d					out	(0dh),a		;lba bits 16 - 23 
+02af 3e e0					ld	a,11100000b	;LBA mode, select drive 0 
+02b1 d3 0e					out	(0eh),a		;drive/head register 
+02b3 3e 20					ld	a,20h		;Read sector command 
+02b5 d3 0f					out	(0fh),a 
+02b7 db 0f		rd_wait_for_DRQ_set:	in	a,(0fh)		;read status 
+02b9 e6 08					and	08h		;DRQ bit 
+02bb ca b7 02					jp	z,rd_wait_for_DRQ_set	;loop until bit set 
+02be db 0f		rd_wait_for_BSY_clear:	in	a,(0fh) 
+02c0 e6 80					and	80h 
+02c2 c2 be 02					jp	nz,rd_wait_for_BSY_clear 
+02c5 db 0f					in	a,(0fh)		;clear INTRQ 
+02c7 db 08		read_loop:		in	a,(08h)		;get data 
+02c9 77						ld	(hl),a 
+02ca 23						inc	hl 
+02cb db 0f					in	a,(0fh)		;check status 
+02cd e6 08					and	08h		;DRQ bit 
+02cf c2 c7 02					jp	nz,read_loop	;loop until cleared 
+02d2 c9						ret 
+02d3			; 
+02d3			;Subroutine to write one disk sector (256 bytes) 
+02d3			;Address of data to write to disk passed in HL 
+02d3			;LBA bits 0 to 7 passed in C, bits 8 to 15 passed in B 
+02d3			;LBA bits 16 to 23 passed in E 
+02d3			disk_write: 
+02d3 db 0f		wr_status_loop_1:	in	a,(0fh)		;check status 
+02d5 e6 80					and	80h		;check BSY bit 
+02d7 c2 d3 02					jp	nz,wr_status_loop_1	;loop until not busy 
+02da db 0f		wr_status_loop_2:	in	a,(0fh)		;check	status 
+02dc e6 40					and	40h		;check DRDY bit 
+02de ca da 02					jp	z,wr_status_loop_2	;loop until ready 
+02e1 3e 01					ld	a,01h		;number of sectors = 1 
+02e3 d3 0a					out	(0ah),a		;sector count register 
+02e5 79						ld	a,c 
+02e6 d3 0b					out	(0bh),a		;lba bits 0 - 7 
+02e8 78						ld	a,b 
+02e9 d3 0c					out	(0ch),a		;lba bits 8 - 15 
+02eb 7b						ld	a,e 
+02ec d3 0d					out	(0dh),a		;lba bits 16 - 23 
+02ee 3e e0					ld	a,11100000b	;LBA mode, select drive 0 
+02f0 d3 0e					out	(0eh),a		;drive/head register 
+02f2 3e 30					ld	a,30h		;Write sector command 
+02f4 d3 0f					out	(0fh),a 
+02f6 db 0f		wr_wait_for_DRQ_set:	in	a,(0fh)		;read status 
+02f8 e6 08					and	08h		;DRQ bit 
+02fa ca f6 02					jp	z,wr_wait_for_DRQ_set	;loop until bit set			 
+02fd 7e			write_loop:		ld	a,(hl) 
+02fe d3 08					out	(08h),a		;write data 
+0300 23						inc	hl 
+0301 db 0f					in	a,(0fh)		;read status 
+0303 e6 08					and	08h		;check DRQ bit 
+0305 c2 fd 02					jp	nz,write_loop	;write until bit cleared 
+0308 db 0f		wr_wait_for_BSY_clear:	in	a,(0fh) 
+030a e6 80					and	80h 
+030c c2 08 03					jp	nz,wr_wait_for_BSY_clear 
+030f db 0f					in	a,(0fh)		;clear INTRQ 
+0311 c9						ret 
+0312			; 
+0312			;Strings used in subroutines 
+0312 .. 00		length_entry_string:	defm	"Enter length of file to load (decimal): ",0 
+033b .. 00		dump_entry_string:	defm	"Enter no. of bytes to dump (decimal): ",0 
+0362 .. 00		LBA_entry_string:	defm	"Enter LBA (decimal, 0 to 65535): ",0 
+0384 08 1b .. 00	erase_char_string:	defm	008h,01bh,"[K",000h	;ANSI sequence for backspace, erase to end of line. 
+0389 .. 00		address_entry_msg:	defm	"Enter 4-digit hex address (use upper-case A through F): ",0 
+03c2 .. 00		address_error_msg:	defm	"\r\nError: invalid hex character, try again: ",0 
+03ee .. 00		data_entry_msg:		defm	"Enter hex bytes, hit return when finished.\r\n",0 
+041b .. 00		data_error_msg:		defm	"Error: invalid hex byte.\r\n",0 
+0436 .. 00		decimal_error_msg:	defm	"\r\nError: invalid decimal number, try again: ",0 
+0463			; 
+0463			;Simple monitor program for CPUville Z80 computer with serial interface. 
+0463 31 ff db		monitor_cold_start:	ld	sp,ROM_monitor_stack 
+0466 cd 03 00					call	initialize_port 
+0469 21 dc 05					ld	hl,monitor_message 
+046c cd 18 00					call	write_string 
+046f cd 89 02		monitor_warm_start:	call	write_newline		;routine program return here to avoid re-initialization of port 
+0472 3e 3e					ld	a,03eh			;cursor symbol 
+0474 cd 0c 00					call	write_char 
+0477 21 08 db					ld	hl,buffer 
+047a cd 4c 00					call	get_line		;get monitor input string (command) 
+047d cd 89 02					call	write_newline 
+0480 cd 84 04					call	parse			;interprets command, returns with address to jump to in HL 
+0483 e9						jp	(hl) 
+0484			; 
+0484			;Parses an input line stored in buffer for available commands as described in parse table. 
+0484			;Returns with address of jump to action for the command in HL 
+0484 01 ba 07		parse:			ld	bc,parse_table		;bc is pointer to parse_table 
+0487 0a			parse_start:		ld	a,(bc)			;get pointer to match string from parse table 
+0488 5f						ld	e,a 
+0489 03						inc	bc 
+048a 0a						ld	a,(bc)			 
+048b 57						ld	d,a			;de will is pointer to strings for matching 
+048c 1a						ld	a,(de)			;get first char from match string 
+048d f6 00					or	000h			;zero? 
+048f ca aa 04					jp	z,parser_exit		;yes, exit no_match 
+0492 21 08 db					ld	hl,buffer		;no, parse input string  
+0495 be			match_loop:		cp	(hl)			;compare buffer char with match string char 
+0496 c2 a4 04					jp	nz,no_match		;no match, go to next match string 
+0499 f6 00					or	000h			;end of strings (zero)? 
+049b ca aa 04					jp	z,parser_exit		;yes, matching string found 
+049e 13						inc	de			;match so far, point to next char in match string 
+049f 1a						ld	a,(de)			;get next character from match string 
+04a0 23						inc	hl			;and point to next char in input string 
+04a1 c3 95 04					jp	match_loop		;check for match 
+04a4 03			no_match:		inc	bc			;skip over jump target to 
+04a5 03						inc	bc 
+04a6 03						inc	bc			;get address of next matching string 
+04a7 c3 87 04					jp	parse_start 
+04aa 03			parser_exit:		inc	bc			;skip to address of jump for match 
+04ab 0a						ld	a,(bc) 
+04ac 6f						ld	l,a 
+04ad 03						inc	bc 
+04ae 0a						ld	a,(bc) 
+04af 67						ld	h,a			;returns with jump address in hl 
+04b0 c9						ret 
+04b1			; 
+04b1			;Actions to be taken on match 
+04b1			; 
+04b1			;Memory dump program 
+04b1			;Input 4-digit hexadecimal address 
+04b1			;Calls memory_dump subroutine 
+04b1 21 06 06		dump_jump:		ld	hl,dump_message		;Display greeting 
+04b4 cd 18 00					call	write_string 
+04b7 21 89 03					ld	hl,address_entry_msg	;get ready to get address 
+04ba cd 18 00					call	write_string 
+04bd cd fe 00					call	address_entry		;returns with address in HL 
+04c0 cd 89 02					call	write_newline 
+04c3 cd 99 01					call	memory_dump 
+04c6 c3 6f 04					jp	monitor_warm_start 
+04c9			; 
+04c9			;Hex loader, displays formatted input 
+04c9 21 2d 06		load_jump:		ld	hl,load_message		;Display greeting 
+04cc cd 18 00					call	write_string		;get address to load 
+04cf 21 89 03					ld	hl,address_entry_msg	;get ready to get address 
+04d2 cd 18 00					call	write_string 
+04d5 cd fe 00					call	address_entry 
+04d8 cd 89 02					call	write_newline 
+04db cd 13 02					call	memory_load 
+04de c3 6f 04					jp	monitor_warm_start 
+04e1			; 
+04e1			;Jump and run do the same thing: get an address and jump to it. 
+04e1 21 5c 06		run_jump:		ld	hl,run_message		;Display greeting 
+04e4 cd 18 00					call	write_string 
+04e7 21 89 03					ld	hl,address_entry_msg	;get ready to get address 
+04ea cd 18 00					call	write_string 
+04ed cd fe 00					call	address_entry 
+04f0 e9						jp	(hl) 
+04f1			; 
+04f1			;Help and ? do the same thing, display the available commands 
+04f1 21 ee 05		help_jump:		ld	hl,help_message 
+04f4 cd 18 00					call	write_string 
+04f7 01 ba 07					ld	bc,parse_table		;table with pointers to command strings 
+04fa 0a			help_loop:		ld	a,(bc)			;displays the strings for matching commands, 
+04fb 6f						ld	l,a			;getting the string addresses from the 
+04fc 03						inc	bc			;parse table 
+04fd 0a						ld	a,(bc)			;pass address of string to hl through a reg 
+04fe 67						ld	h,a 
+04ff 7e						ld	a,(hl)			;hl now points to start of match string 
+0500 f6 00					or	000h			;exit if no_match string 
+0502 ca 15 05					jp	z,help_done 
+0505 c5						push	bc			;write_char uses b register 
+0506 3e 20					ld	a,020h			;space char 
+0508 cd 0c 00					call	write_char 
+050b c1						pop	bc 
+050c cd 18 00					call	write_string		;writes match string 
+050f 03						inc	bc			;pass over jump address in table 
+0510 03						inc	bc 
+0511 03						inc	bc 
+0512 c3 fa 04					jp	help_loop 
+0515 c3 6f 04		help_done:		jp	monitor_warm_start 
+0518			; 
+0518			;Binary file load. Need both address to load and length of file 
+0518 21 91 06		bload_jump:		ld	hl,bload_message 
+051b cd 18 00					call	write_string 
+051e 21 89 03					ld	hl,address_entry_msg 
+0521 cd 18 00					call	write_string 
+0524 cd fe 00					call	address_entry 
+0527 cd 89 02					call	write_newline 
+052a e5						push	hl 
+052b 21 12 03					ld	hl,length_entry_string 
+052e cd 18 00					call	write_string 
+0531 cd 29 01					call	decimal_entry 
+0534 44						ld	b,h 
+0535 4d						ld	c,l 
+0536 21 b4 06					ld	hl,bload_ready_message 
+0539 cd 18 00					call	write_string 
+053c e1						pop	hl 
+053d cd 28 00					call	bload 
+0540 c3 6f 04					jp	monitor_warm_start 
+0543			; 
+0543			;Binary memory dump. Need address of start of dump and no. bytes 
+0543 21 d8 06		bdump_jump:		ld	hl,bdump_message 
+0546 cd 18 00					call	write_string 
+0549 21 89 03					ld	hl,address_entry_msg 
+054c cd 18 00					call	write_string 
+054f cd fe 00					call	address_entry 
+0552 cd 89 02					call	write_newline 
+0555 e5						push	hl 
+0556 21 3b 03					ld	hl,dump_entry_string 
+0559 cd 18 00					call	write_string 
+055c cd 29 01					call	decimal_entry 
+055f 44						ld	b,h 
+0560 4d						ld	c,l 
+0561 21 08 07					ld	hl,bdump_ready_message 
+0564 cd 18 00					call	write_string 
+0567 cd 7f 02					call	get_char 
+056a e1						pop	hl 
+056b cd 3a 00					call	bdump 
+056e c3 6f 04					jp	monitor_warm_start 
+0571			;Disk read. Need memory address to place data, LBA of sector to read 
+0571 21 2f 07		diskrd_jump:		ld	hl,diskrd_message 
+0574 cd 18 00					call	write_string 
+0577 21 89 03					ld	hl,address_entry_msg 
+057a cd 18 00					call	write_string 
+057d cd fe 00					call	address_entry 
+0580 cd 89 02					call	write_newline 
+0583 e5						push	hl 
+0584 21 62 03					ld	hl,LBA_entry_string 
+0587 cd 18 00					call	write_string 
+058a cd 29 01					call	decimal_entry 
+058d 44						ld	b,h 
+058e 4d						ld	c,l 
+058f 1e 00					ld	e,00h 
+0591 e1						pop	hl 
+0592 cd 94 02					call	disk_read 
+0595 c3 6f 04					jp	monitor_warm_start 
+0598 21 57 07		diskwr_jump:		ld	hl,diskwr_message 
+059b cd 18 00					call	write_string 
+059e 21 89 03					ld	hl,address_entry_msg 
+05a1 cd 18 00					call	write_string 
+05a4 cd fe 00					call	address_entry 
+05a7 cd 89 02					call	write_newline 
+05aa e5						push	hl 
+05ab 21 62 03					ld	hl,LBA_entry_string 
+05ae cd 18 00					call	write_string 
+05b1 cd 29 01					call	decimal_entry 
+05b4 44						ld	b,h 
+05b5 4d						ld	c,l 
+05b6 1e 00					ld	e,00h 
+05b8 e1						pop	hl 
+05b9 cd d3 02					call	disk_write 
+05bc c3 6f 04					jp	monitor_warm_start 
+05bf 21 00 08		cpm_jump:		ld	hl,0800h 
+05c2 01 00 00					ld	bc,0000h 
+05c5 1e 00					ld	e,00h 
+05c7 cd 94 02					call	disk_read 
+05ca c3 00 08					jp	0800h 
+05cd			;Prints message for no match to entered command 
+05cd 21 eb 05		no_match_jump:		ld	hl,no_match_message 
+05d0 cd 18 00					call	write_string 
+05d3 21 08 db					ld	hl, buffer 
+05d6 cd 18 00					call	write_string 
+05d9 c3 6f 04					jp	monitor_warm_start 
+05dc			; 
+05dc			;Monitor data structures: 
+05dc			; 
+05dc .. 00		monitor_message: 	defm	"\r\nROM ver. 8\r\n",0 
+05eb .. 00		no_match_message:	defm	"? ",0 
+05ee .. 00		help_message:		defm	"Commands implemented:\r\n",0 
+0606 .. 00		dump_message:		defm	"Displays a 256-byte block of memory.\r\n",0 
+062d .. 00		load_message:		defm	"Enter hex bytes starting at memory location.\r\n",0 
+065c .. 00		run_message:		defm	"Will jump to (execute) program at address entered.\r\n",0 
+0691 .. 00		bload_message:		defm	"Loads a binary file into memory.\r\n",0 
+06b4 .. 00		bload_ready_message:	defm	"\n\rReady to receive, start transfer.",0 
+06d8 .. 00		bdump_message:		defm	"Dumps binary data from memory to serial port.\r\n",0 
+0708 .. 00		bdump_ready_message:	defm	"\n\rReady to send, hit any key to start.",0 
+072f .. 00		diskrd_message:		defm	"Reads one sector from disk to memory.\r\n",0 
+0757 .. 00		diskwr_message:		defm	"Writes one sector from memory to disk.\r\n",0 
+0780			;Strings for matching: 
+0780 .. 00		dump_string:		defm	"dump",0 
+0785 .. 00		load_string:		defm	"load",0 
+078a .. 00		jump_string:		defm	"jump",0 
+078f .. 00		run_string:		defm	"run",0 
+0793 .. 00		question_string:	defm	"?",0 
+0795 .. 00		help_string:		defm	"help",0 
+079a .. 00		bload_string:		defm	"bload",0 
+07a0 .. 00		bdump_string:		defm	"bdump",0 
+07a6 .. 00		diskrd_string:		defm	"diskrd",0 
+07ad .. 00		diskwr_string:		defm	"diskwr",0 
+07b4 .. 00		cpm_string:		defm	"cpm",0 
+07b8 00 00		no_match_string:	defm	0,0 
+07ba			;Table for matching strings to jumps 
+07ba 80 07 b1 04 85 07 c9 04	parse_table:		defw	dump_string,dump_jump,load_string,load_jump 
+07c2 8a 07 e1 04 8f 07 e1 04				defw	jump_string,run_jump,run_string,run_jump 
+07ca 93 07 f1 04 95 07 f1 04				defw	question_string,help_jump,help_string,help_jump 
+07d2 9a 07 18 05 a0 07 43 05				defw	bload_string,bload_jump,bdump_string,bdump_jump 
+07da a6 07 71 05 ad 07 98 05				defw	diskrd_string,diskrd_jump,diskwr_string,diskwr_jump 
+07e2 b4 07 bf 05				defw	cpm_string,cpm_jump 
+07e6 b8 07 cd 05				defw	no_match_string,no_match_jump 
+# End of file 2k_rom_8.asm
+07ea
