@@ -1,0 +1,9 @@
+#!/bin/sh
+# Usage: bz80asm <source.asm>
+# Expands a single source filename into z80asm's three-argument form
+# (list, output, source) so callers don't repeat the basename:
+#     bz80asm foo.asm
+# runs: z80asm --list=foo.lst -o foo.bin foo.asm
+src="$1"
+base="${src%.*}"
+exec z80asm --list="$base.lst" -o "$base.bin" "$src"

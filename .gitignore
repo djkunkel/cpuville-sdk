@@ -1,0 +1,27 @@
+# Build artifacts
+*.o
+*.bin
+*.lst
+*.cim
+*.rom
+*.hex
+*.cmd
+*.cas
+*.rel
+core
+*~
+\#*
+
+# Vendored tool build outputs (binaries built into bin/ by build.sh)
+/bin/zmac
+/bin/z80asm
+
+# Vendored source build intermediates
+/vendor/zmac/src/zmac
+/vendor/zmac/src/zmac.c
+/vendor/zmac/src/doc
+/vendor/zmac/src/doc.inl
+/vendor/z80asm/src/z80asm
+
+# Stray scratch file at repo root
+/a.bin
