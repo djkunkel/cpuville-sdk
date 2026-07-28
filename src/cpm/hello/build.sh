@@ -1,0 +1,1 @@
+cpm +cpm -lm -lndos -o hello.com hello.c
