@@ -1,0 +1,27 @@
+{
+    "configurations": [
+        {
+            "name": "z88dk",
+            "includePath": [
+                "${workspaceFolder}",
+                "${workspaceFolder}/vendor/z88dk/include",
+                "${workspaceFolder}/vendor/z88dk/include/sys"
+            ],
+            "defines": [
+                "Z80",
+                "CPM"
+            ],
+            "compilerPath": "${workspaceFolder}/vendor/z88dk/bin/zcc",
+            "cStandard": "c99",
+            "intelliSenseMode": "gcc-x64",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}",
+                    "${workspaceFolder}/vendor/z88dk/include"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ],
+    "version": 4
+}
