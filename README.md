@@ -13,9 +13,9 @@ on PATH.
 vendor/build-zmac.sh       # build & install zmac into bin/
 vendor/build-z80asm.sh     # build & install z80asm into bin/
 vendor/build-tio.sh        # build & install tio into bin/ (needed by console.sh)
-vendor/build-zxcc.sh       # build & install zxcc into bin/ (CP/M .com emulator)
-sh vendor/clone.sh         # fetch z88dk source (not committed; uses git submodules)
+sh vendor/clone.sh         # fetch z88dk + RunCPM source (not committed)
 sh vendor/z88dk/build.sh   # build & install z88dk tools into bin/
+vendor/build-runcpm.sh     # build & install runcpm into bin/ (CP/M 2.2 emulator)
 ./console.sh               # open a serial terminal (baud/device from serial.conf)
 ```
 
@@ -47,8 +47,8 @@ z80/
 │   ├── xmodem-recv   # Python XMODEM receiver (used by cpmget)
 │   ├── serial-proxy-logger  # debug aid: hex-dump bytes on the serial line
 │   ├── tio           # vendored serial terminal (used by console.sh)
-│   ├── zxcc          # vendored CP/M emulator (runs .com files on the host)
-│   └── bios.bin      # vestigial CP/M BIOS loaded by zxcc at startup
+│   ├── runcpm        # vendored CP/M 2.2 emulator (full CCP, stream I/O)
+│   └── xmodem-recv   # Python XMODEM receiver (used by cpmget)
 ├── sys/
 │   ├── monitor/      # ROM monitor source + build.sh
 │   └── cpm/          # CP/M 2.2 sources + PCPUT/PCGET XMODEM programs
@@ -56,11 +56,11 @@ z80/
     ├── build-zmac.sh    # builds zmac, installs to bin/zmac
     ├── build-z80asm.sh  # builds z80asm, installs to bin/z80asm
     ├── build-tio.sh     # builds tio, installs to bin/tio (meson + ninja)
-    ├── build-zxcc.sh    # builds zxcc, installs to bin/zxcc
+    ├── build-runcpm.sh  # builds runcpm, installs to bin/runcpm
     ├── zmac/            # upstream zmac source
     ├── z80asm/          # upstream z80asm source
     ├── tio/             # forked from https://github.com/tio/tio
-    ├── zxcc-0.5.7/      # upstream zxcc source (CP/M emulator)
+    ├── runcpm/          # upstream RunCPM source (fetched by clone.sh; not committed)
     └── z88dk/           # upstream z88dk source (fetched by clone.sh; not committed)
 ```
 
@@ -105,51 +105,62 @@ that compiles the upstream source and copies the resulting binary into `bin/`
 vendor/build-zmac.sh      # builds zmac, installs to bin/zmac
 vendor/build-z80asm.sh    # builds z80asm, installs to bin/z80asm
 vendor/build-tio.sh       # builds tio, installs to bin/tio (meson + ninja)
-vendor/build-zxcc.sh      # builds zxcc, installs to bin/zxcc (no curses; cpmio disabled)
+vendor/build-runcpm.sh    # builds runcpm, installs to bin/runcpm (CP/M 2.2 emulator)
 ```
 
 Re-running `build-zmac.sh` / `build-z80asm.sh` rebuilds from scratch (object
 files are recreated in place). `build-tio.sh` uses meson, so its `tio/build/`
 directory is reused across runs for fast incremental rebuilds; delete
-`vendor/tio/build` to force a full reconfigure. `build-zxcc.sh` writes
-generated artifacts (a minimal `config.h`, object files, `libcpmredir.a`,
-and the `zxcc` binary) to `vendor/zxcc-0.5.7/build/`; delete that directory
-to force a clean rebuild.
+`vendor/tio/build` to force a full reconfigure. `build-runcpm.sh` applies a
+patch to the upstream RunCPM source (`console.h` STREAMIO fix) before
+compiling; re-running it is safe (the patch is idempotent via `git apply`).
 
-### zxcc — CP/M emulator
+### RunCPM — CP/M 2.2 emulator
 
-`zxcc` (from zxcc-0.5.7) emulates a Z80 plus a subset of CP/M 3, letting
-you run CP/M `.com` programs (such as the Hi-Tech C compiler or DRI's
-MAC/RMAC/LINK) directly on the host. Only the emulator itself is built;
-the `zxc`/`zxas`/`zxlibr`/`zxlink` frontends are thin argument-converting
-wrappers around `zxcc` and are omitted. The optional `cpmio` (curses
-console) layer is disabled, so console I/O uses plain stdio and ncurses
-is not required.
+`runcpm` (from [MockbaTheBorg/RunCPM](https://github.com/MockbaTheBorg/RunCPM))
+is a full CP/M 2.2 emulator that boots an internal CCP and uses host
+folders as disk drives. It is built with `STREAMIO` support so the
+`-s` flag connects stdin/stdout directly, enabling automated testing
+with piped input.
 
-```sh
-zxcc program.com arg1 arg2 ...   # run a CP/M .com file on the host
-```
-
-`zxcc` searches `BINDIR80` then the current directory for `program.com`
-and for `bios.bin` (the vestigial CP/M BIOS). `build-zxcc.sh` compiles
-`BINDIR80` to point at the project's own `bin/` directory and copies the
-bundled `bios.bin` (`vendor/zxcc-0.5.7/Z80/bios.bin`) there, so `zxcc`
-finds it from any cwd after `. ./env.sh` — no separate install step.
-
-The CP/M tools themselves (compiler `.com` files, libraries, headers)
-are not bundled; see `vendor/zxcc-0.5.7/zxcc.html` for setup. Drop any
-`.com` tools into `bin/` (or the current directory) and they'll be
-found. `LIBDIR80`/`INCDIR80` keep the upstream defaults
-(`/usr/local/lib/cpm/lib80/`, `.../include80/`); override the search
-paths by editing the defines written to
-`vendor/zxcc-0.5.7/build/config.h` and rerunning `build-zxcc.sh`.
-
-A sample program lives in `src/cpm/hello/`:
+Build and run:
 
 ```sh
 . ./env.sh
-zxcc src/cpm/hello/hello.com   # -> Hello from z88dk!
+vendor/build-runcpm.sh        # builds runcpm, sets up bin/A/0/ disk folder
 ```
+
+RunCPM looks for disk drive folders (`A/`, `B/`, ...) relative to the
+`bin/` directory. Copy `.COM` files (uppercase) into `bin/A/0/` (user
+area 0 of drive A):
+
+```sh
+cp src/cpm/fprime/fprime.com bin/A/0/FPRIME.COM
+```
+
+Then run with piped input (`-s` = stdin/stdout mode):
+
+```sh
+printf "fprime\n30\n" | runcpm -s
+# -> MAX NUMBER TO CHECK
+#    30
+#    2 3 5 7 11 13 17 19 23 29
+```
+
+The first line (`fprime`) is the CP/M command (program name at the
+`A>` prompt); subsequent lines are the program's stdin. Use `timeout`
+to handle the lingering CCP prompt after the program exits (RunCPM
+returns to `A>` and waits for more commands):
+
+```sh
+timeout 10 bash -c 'printf "fprime\n100\n" | runcpm -s'
+```
+
+A patch to RunCPM's `console.h` fixes `_chready()` in STREAMIO mode so
+that programs polling for console status (e.g. z88dk's `getk()` for
+CTRL-C handling) don't drain the pipe and abort on EOF. The patch is
+kept in `vendor/runcpm-streamio-console-fix.patch` and applied
+automatically by `build-runcpm.sh`.
 
 ## The Cpuvulle Z80 machine
 
@@ -325,9 +336,8 @@ error.
   `source ./env.sh`). Running it directly refuses to modify your shell.
 - `bz80asm` derives output names from the input basename, so any extension
   works: `bz80asm foo.z80` → `foo.bin`, `foo.lst`.
-- The vendored `z80asm` is GPLv3; `zmac` has its own license; `zxcc`
-  is GPLv2 (the Z80 engine) with its `cpmredir` library under the LGPL
-  — see `vendor/<tool>/` for the upstream COPYING/LICENSE files.
+- The vendored `z80asm` is GPLv3; `zmac` has its own license; `runcpm`
+  is MIT — see `vendor/<tool>/` for the upstream LICENSE files.
 - `cpmget -v` enables byte-level hex tracing to stderr, showing every
   byte transferred in both directions with timestamps. Useful for
   diagnosing protocol issues or counting retries.

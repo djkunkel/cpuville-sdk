@@ -3,6 +3,13 @@
 
 #define MAX_PRIMES 3000
 
+#define CTRL_C 3
+
+static int check_break(void)
+{
+    return getk() == CTRL_C;
+}
+
 static int is_prime(long n, const long *primes, int count)
 {
     int i;
@@ -37,6 +44,10 @@ int main(void)
     printf("%ld ", 2L);
 
     for (n = 3; n <= limit; n += 2) {
+        if (check_break()) {
+            printf("^C\n");
+            break;
+        }
         if (is_prime(n, primes, count)) {
             primes[count++] = n;
             printf("%ld ", n);

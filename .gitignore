@@ -12,14 +12,9 @@ core
 *~
 \#*
 
-# # Vendored tool build outputs (binaries built into bin/ by build.sh)
+# Vendored tool build outputs (binaries built into bin/ by build.sh)
 # /bin/zmac
 # /bin/z80asm
-
-# zxcc runtime asset: the vestigial CP/M BIOS loaded at startup.
-# Installed by vendor/build-zxcc.sh; must be tracked despite *.bin above.
-!/bin/bios.bin
-!/vendor/zxcc-0.5.7/Z80/bios.bin
 
 # Vendored source build intermediates
 /vendor/zmac/src/zmac
@@ -28,10 +23,15 @@ core
 /vendor/zmac/src/doc.inl
 /vendor/z80asm/src/z80asm
 /vendor/tio/build
-/vendor/zxcc-0.5.7/build
+/vendor/runcpm/RunCPM/RunCPM
+/vendor/runcpm/RunCPM/*.o
 
 # Vendored source trees fetched by vendor/clone.sh (not committed)
 /vendor/z88dk/
+/vendor/runcpm/
+
+# RunCPM disk folders (CP/M disk images, built by build-runcpm.sh)
+/bin/A/
 
 # Stray scratch file at repo root
 /a.bin
