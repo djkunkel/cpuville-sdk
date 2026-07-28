@@ -13,6 +13,8 @@ on PATH.
 vendor/build-zmac.sh       # build & install zmac into bin/
 vendor/build-z80asm.sh     # build & install z80asm into bin/
 vendor/build-tio.sh        # build & install tio into bin/ (needed by console.sh)
+sh vendor/clone.sh         # fetch z88dk source (not committed; uses git submodules)
+sh vendor/z88dk/build.sh   # build & install z88dk tools into bin/
 ./console.sh               # open a serial terminal (baud/device from serial.conf)
 ```
 
@@ -53,8 +55,8 @@ z80/
     ├── build-tio.sh     # builds tio, installs to bin/tio (meson + ninja)
     ├── zmac/            # upstream zmac source
     ├── z80asm/          # upstream z80asm source
-    ├── tio/             # upstream tio source
-    └── z88dk/           # upstream z88dk source (build.sh is upstream's own)
+    ├── tio/             # forked from https://github.com/tio/tio
+    └── z88dk/           # upstream z88dk source (fetched by clone.sh; not committed)
 ```
 
 > **See also:** [`PLAN.md`](PLAN.md) records design options for a

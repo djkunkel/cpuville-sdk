@@ -1,0 +1,35 @@
+#!/bin/sh
+# Fetch vendored upstream source trees that are NOT committed to this
+# repository. Currently that is only z88dk, which is large and whose
+# upstream we want to keep tracking.
+#
+# z88dk uses git submodules (optparse, regex, Unity, UNIXem, uthash under
+# ext/), so it must be cloned with --recursive.
+#
+# Run from anywhere; sources are placed in vendor/<tool>/ next to this
+# script:
+#
+#     sh vendor/clone.sh
+#
+# Tracks the latest upstream master. If a newer commit breaks the build,
+# we deal with that ourselves rather than pinning.
+# After cloning, build with vendor/z88dk/build.sh and source env.sh to
+# put the resulting tools on PATH.
+
+set -e
+
+cd "$(dirname "$0")"            # -> vendor/
+
+Z88DK_URL="https://github.com/z88dk/z88dk.git"
+
+if [ -e z88dk ]; then
+  printf 'vendor/z88dk already exists; skipping clone.\n' >&2
+  printf 'To re-clone, remove it first:  rm -rf vendor/z88dk\n' >&2
+  exit 0
+fi
+
+printf 'Cloning z88dk (with submodules) at latest master...\n'
+git clone --recursive "$Z88DK_URL" z88dk
+
+printf 'Done. z88dk source is in vendor/z88dk.\n'
+printf 'Next: sh vendor/z88dk/build.sh   &&   . ./env.sh\n'

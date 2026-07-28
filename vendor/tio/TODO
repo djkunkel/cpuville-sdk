@@ -1,0 +1,111 @@
+ * Add release support for arm and x86 binary tarballs
+
+ * Support input and input mapping from lua scripts
+
+ * Add option to send file raw (no modem protocol)
+
+ * Add loopback option
+
+   Send received serial input back to output (for testing etc.)
+
+ * Add loopback support between two serial ports
+
+   Useful for traffic monitoring
+
+ * Add mapping feature for printing non-printable characters
+
+ * Porting layer to support native win32 builds.
+
+   Some of the work that needs to be done: 
+
+    All posix functions need to be platform independent, go though file by file:
+
+    termios.h
+    unistd.h has very limited functions
+    ENV different in config_file_resolve
+    errno
+    sys/ioctl.h
+    sys/poll.h
+    socket, may need a new thread
+    Serial, RS485, character mapping
+    Communication pipe
+
+    Port enumerate, all devices of the same type have the same name (eg. USB
+    Serial Device for ttyACM) -> which makes regex not meaningful (kind of a
+    good thing since libtre in Mingw has too much dependencies makes binary too
+    big)
+
+ * Support traditional hex output format such as:
+
+   00000000  74 65 73 74 20 74 65 73  74 20 74 65 73 74 20 74  |test test test t|
+   00000010  65 73 74 64 66 0a 61 0a  66 61 0a 66 0a 61 73 66  |estdf.a.fa.f.asf|
+   00000020  64 61 64 73 66 61 73 66  64 61 73 64 66 61 64 73  |dadsfasfdasdfads|
+   00000030  66 0a 61 73 64 66 61 64  73 66 61 73 64 66 61 73  |f.asdfadsfasdfas|
+   00000040  64 66 0a 61 73 64 66 61  64 73 66 61 73 64 66 61  |df.asdfadsfasdfa|
+   00000050  73 64 66 66 64 61 73 64  66 0a 0a 31 32 33 31 0a  |sdffdasdf..1231.|
+   00000060  65 32 31 64 73 77 65 64  0a 0a                    |e21dswed..|
+   0000006a
+
+ * Add support for activity based time stamping in normal output mode
+
+   Already supported in hex output mode.
+
+ * Allow tio to connect to socket
+
+   After some more consideration I think it makes sense to support connecting to a
+   socket as that will make tio be able to both serve a serial port via a socket
+   and connect to it - it will be an end to end solution. In short we will be able
+   to do the following:
+
+   Host serial port on socket (existing feature):
+    $ tio --socket unix:/tmp/tio-socket-0 /dev/ttyUSB0
+
+   Connect to same socket (new feature):
+    $ tio unix:/tmp/tio-socket-0
+
+   Besides a bit of refactoring the following required changes spring to mind:
+
+    * Socket mode and type of socket should be activated via device name prefix. For example:
+      * UNIX socket: tio unix:<filename>
+      * TCPv4 socket: tio inet:<ip>:<port>
+      * TCPv6 socket: tio inet6:<ip>:<port>
+    * If no port number defined default to 3333
+    * Mapping flags INLCR, IGNCR, ICRNL needs implementation for socket mode
+    * Error messages should just say "device" instead of "tty device" etc.
+    * Remove other tty'isms (tty_write() should be device_write() etc.)
+    * In session key commands that do not work in socket mode should either not be listed or print an error messages if used.
+    * All non-tty features should continue work (auto-connect etc.)
+    * Shell completion script update
+    * Man page update
+
+
+ * Split I/O feature
+
+   Allow to split input and output so that it is possible to manage these
+   independently.
+
+   The general idea is to redirect the output stream on the socket port number
+   specified but then redirect the input stream on the same port number + 1.
+
+   Example:
+
+    $ tio /dev/ttyUSB0 --socket inet:4444,split-io
+
+   Will result in output stream being hosted on port 4444 and input stream
+   hosted on port 4445.
+
+   For file sockets something similar can be arranged:
+
+    $ tio /dev/ttyUSB0 --socket unix:/tmp/tio-socket-0,split-io
+
+   Will result in output stream being hosted via /tmp/tio-socket-0 and input
+   stream hosted via /tmp/tio-socket-0_input
+
+ * Websocket support
+
+   Extend the socket feature to redirect serial I/O to websocket on e.g. port
+   1234 like so:
+
+    $ tio --socket ws:1234
+
+   Use libwesockets to implement feature.

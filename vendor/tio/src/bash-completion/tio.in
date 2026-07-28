@@ -1,0 +1,146 @@
+#
+# Bash completion script for tio.
+#
+
+_tio()
+{
+    local cur prev opts base ttys
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    #  The options we'll complete.
+    opts="-b --baudrate \
+          -d --databits \
+          -f --flow \
+          -s --stopbits \
+          -p --parity \
+          -o --output-delay \
+          -o --output-line-delay \
+             --line-pulse-duration \
+          -a --auto-connect \
+             --exclude-devices \
+             --exclude-drivers \
+             --exclude-tids \
+          -n --no-reconnect \
+          -e --local-echo \
+          -l --log \
+             --log-file \
+             --log-directory \
+             --log-append \
+             --log-strip \
+          -m --map \
+          -t --timestamp \
+             --timestamp-format \
+             --timestamp-timeout \
+          -L --list \
+          -c --color \
+          -S --socket \
+             --input-mode \
+             --output-mode \
+             --rs-485 \
+             --rs-485-config \
+             --alert \
+             --mute \
+             --script \
+             --script-file \
+             --script-run \
+             --exec \
+             --complete-profiles \
+          -v --version \
+          -h --help"
+
+    #  Complete the arguments to the options.
+    case "${prev}" in
+        -b | --baudrate)
+            local baudrates="@baudrates@"
+            COMPREPLY=( $(compgen -W "$baudrates" -- ${cur}) )
+            return 0
+            ;;
+        -d | --databits)
+            COMPREPLY=( $(compgen -W "5 6 7 8" -- ${cur}) )
+            return 0
+            ;;
+        -f | --flow)
+            COMPREPLY=( $(compgen -W "hard soft none" -- ${cur}) )
+            return 0
+            ;;
+        -s | --stopbits)
+            COMPREPLY=( $(compgen -W "1 2" -- ${cur}) )
+            return 0
+            ;;
+        -p | --parity)
+            COMPREPLY=( $(compgen -W "even odd none" -- ${cur}) )
+            return 0
+            ;;
+        -o | --output-delay)
+            COMPREPLY=( $(compgen -W "1 10 100" -- ${cur}) )
+            return 0
+            ;;
+        -O | --output-line-delay)
+            COMPREPLY=( $(compgen -W "1 10 100" -- ${cur}) )
+            return 0
+            ;;
+        -a | --auto-connect)
+            COMPREPLY=( $(compgen -W "new latest none" -- ${cur}) )
+            return 0
+            ;;
+        -m | --map)
+            COMPREPLY=( $(compgen -W "ICRNL IGNCR INLCR IFFESCC INLCRNL ICRCRNL IMSB2LSB OCRNL ODELBS ONLCRNL OLTU ONULBRK OIGNCR" -- ${cur}) )
+            return 0
+            ;;
+        --timestamp-format)
+            COMPREPLY=( $(compgen -W "24hour 24hour-start 24hour-delta iso8601 epoch epoch-usec" -- ${cur}) )
+            return 0
+            ;;
+        -c | --color)
+            COMPREPLY=( $(compgen -W "$(seq 0 255) none list" -- ${cur}) )
+            return 0
+            ;;
+        -S | --socket)
+            COMPREPLY=( $(compgen -W "unix: inet: inet6:" -- ${cur}) )
+            return 0
+            ;;
+        --input-mode)
+            COMPREPLY=( $(compgen -W "normal hex line"  -- ${cur}) )
+            return 0
+            ;;
+        --output-mode)
+            COMPREPLY=( $(compgen -W "normal hex"  -- ${cur}) )
+            return 0
+            ;;
+        --rs-485-config)
+            COMPREPLY=( $(compgen -W "RTS_ON_SEND RTS_AFTER_SEND RTS_DELAY_BEFORE_SEND RTS_DELAY_AFTER_SEND RX_DURING_TX"  -- ${cur}) )
+            return 0
+            ;;
+        --alert)
+            COMPREPLY=( $(compgen -W "none bell blink"  -- ${cur}) )
+            return 0
+            ;;
+        --script-run)
+            COMPREPLY=( $(compgen -W "once always never"  -- ${cur}) )
+            return 0
+            ;;
+        *)
+        ;;
+    esac
+    case "${cur}" in
+        -*)
+            COMPREPLY=($(compgen -W "${opts}" -- ${cur}))
+            return 0
+            ;;
+    esac
+
+    profiles="`tio --complete-profiles`"
+
+    if [ -d /dev/serial/by-id ]; then
+        ttys=$(printf '%s\n' /dev/tty* /dev/serial/by-id/*)
+    else
+        ttys=$(printf '%s\n' /dev/tty*)
+    fi
+    COMPREPLY=( $(compgen -W "${ttys} ${profiles}" -- ${cur}) )
+    return 0
+}
+
+# Bind completion to tio command
+complete -o default -F _tio tio

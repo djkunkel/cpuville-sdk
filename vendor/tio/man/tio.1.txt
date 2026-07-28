@@ -1,0 +1,625 @@
+tio(1)                                                                                                         User Commands                                                                                                         tio(1)
+
+NAME
+       tio - a serial device I/O tool
+
+SYNOPSIS
+       tio [<options>] <tty-device|profile|tid>
+
+DESCRIPTION
+       tio is a serial device tool which features a straightforward command-line and configuration file interface to easily connect to serial TTY devices for basic I/O operations.
+
+OPTIONS
+       -b, --baudrate <bps>
+
+              Set baud rate [bps] (default: 115200).
+
+       -d, --databits 5|6|7|8
+
+              Set data bits (default: 8).
+
+       -f, --flow hard|soft|none
+
+              Set flow control (default: none).
+
+       -s, --stopbits 1|2
+
+              Set stop bits (default: 1).
+
+       -p, --parity odd|even|none|mark|space
+
+              Set parity (default: none).
+
+              Note: With mark parity the parity bit is always 0. With space parity the parity bit is always 1. Not all platforms support mark and space parity.
+
+       -o, --output-delay <ms>
+
+              Set output delay [ms] inserted between each sent character (default: 0).
+
+       -O, --output-line-delay <ms>
+
+              Set output delay [ms] inserted between each sent line (default: 0).
+
+           --line-pulse-duration <duration>
+
+              Set the pulse duration [ms] of each serial port line using the following key value pair format in the duration field: <key>=<value>
+
+              Each key represents a serial line. The following keys are available:
+
+              DTR     Data Terminal Ready
+
+              RTS     Request To Send
+
+              CTS     Clear To Send
+
+              DSR     Data Set Ready
+
+              DCD     Data Carrier Detect
+
+              RI      Ring Indicator
+
+              If defining more than one key value pair, the pairs must be comma separated.
+
+              The default pulse duration for each line is 100 ms.
+
+       -a, --auto-connect new|latest|direct
+
+              Automatically connect to serial device according to one of the following strategies:
+
+              new       Automatically connect to first new appearing serial device.
+
+              latest    Automatically connect to latest registered serial device.
+
+              direct    Connect directly to specified TTY device.
+
+              All the listed strategies automatically reconnects according to strategy if device is not available or connection is lost.
+
+              Default value is "direct".
+
+           --exclude-devices <pattern>
+
+              Exclude devices by pattern ('*' and '?' supported).
+
+           --exclude-drivers <pattern>
+
+              Exclude drivers by pattern ('*' and '?' supported).
+
+           --exclude-tids <pattern>
+
+              Exclude topology IDs by pattern ('*' and '?' supported).
+
+       -n, --no-reconnect
+
+              Do not reconnect.
+
+              This means that tio will exit if it fails to connect to device or an established connection is lost.
+
+       -e, --local-echo
+
+              Enable local echo.
+
+       -t, --timestamp
+
+              Enable line timestamp.
+
+           --timestamp-format <format>
+
+              Set timestamp format to any of the following timestamp formats:
+
+              24hour          24-hour format ("hh:mm:ss.sss")
+
+              24hour-start    24-hour format relative to start time
+
+              24hour-delta    24-hour format relative to previous timestamp
+
+              iso8601         ISO8601 format ("YYYY-MM-DDThh:mm:ss.sss")
+
+              epoch           Seconds since Unix epoch (1970-01-01)
+
+              epoch-usec      Seconds since Unix epoch (1970-01-01) with subdivision microseconds
+
+              Default format is 24hour
+
+           --timestamp-timeout <ms>
+
+              Set timestamp timeout value in milliseconds.
+
+              This value only takes effect in hex output mode where timestamps are only printed after elapsed timeout time of no output activity from tty device.
+
+              Default value is 200.
+
+       -l, --list
+
+              List available targets (serial devices, TIDs, configuration profiles).
+
+       -L, --log
+
+              Enable log to file.
+
+              The log file will be automatically named using the following format tio_TARGET_YYYY-MM-DDTHH:MM:SS.log. Target being the command line target such as tty-device, tid, or configuration profile.
+
+              The filename can be manually set using the --log-file option.
+
+           --log-file <filename>
+
+              Set log filename.
+
+           --log-directory <path>
+
+              Set log directory path in which to save automatically named log files.
+
+           --log-append
+
+              Append to log file.
+
+           --log-strip
+
+              Strip control characters and escape sequences from log.
+
+       -m, --map <flags>
+
+              Map (replace, translate) characters on input to the serial device or output from the serial device. The following mapping flags are supported:
+
+              ICRNL       Map CR to NL on input (unless IGNCR is set)
+
+              IGNCR       Ignore CR on input
+
+              IFFESCC     Map FF to ESC-c on input
+
+              INLCR       Map NL to CR on input
+
+              INLCRNL     Map NL to CR-NL on input
+
+              ICRCRNL     Map CR to CR-NL on input
+
+              IMSB2LSB    Map MSB bit order to LSB on input
+
+              OCRNL       Map CR to NL on output
+
+              ODELBS      Map DEL to BS on output
+
+              ONLCRNL     Map NL to CR-NL on output
+
+              OLTU        Map lowercase characters to uppercase on output
+
+              ONULBRK     Map nul (zero) to send break signal on output
+
+              OIGNCR      Ignore CR on output
+
+              If defining more than one flag, the flags must be comma separated.
+
+           --input-mode normal|hex|line
+
+              Set input mode.
+
+              In normal mode input characters are sent immediately as they are typed.
+
+              In hex input mode bytes can be sent by typing the two-character hexadecimal representation of the 1 byte value, e.g.: to send 0xA you must type 0a or 0A.
+
+              In line input mode input characters are sent when you press enter. The only editing feature supported in this mode is backspace.
+
+              Default value is "normal".
+
+           --output-mode normal|hex|hexN
+
+              Set output mode.
+
+              In hex mode each incoming byte is printed out as a 1 byte hex value.
+
+              In hexN mode, N is a number less than or equal to 4096 which defines how many hex values will be printed before a line break.
+
+              Default value is "normal".
+
+       -c, --color 0..255|bold|none|list
+
+              Colorize tio text using ANSI color code value ranging from 0 to 255 or use "none" for no color or use "bold" to apply bold formatting to existing system color.
+
+              Use "list" to print a list of available ANSI color codes.
+
+              Default value is "bold".
+
+       -S, --socket <socket>
+
+              Redirect I/O to socket.
+
+              Any  input from clients connected to the socket is sent on the serial port as if entered at the terminal where tio is running (except that ctrl-t sequences are not recognized), and any input from the serial port is multi‐
+              plexed to the terminal and all connected clients.
+
+              Sockets remain open while the serial port is disconnected, and writes will block.
+
+              Various socket types are supported using the following prefixes in the socket field:
+
+              unix:<filename>     Unix Domain Socket (file)
+
+              inet:<port>         Internet Socket (network)
+
+              inet6:<port>        Internet IPv6 Socket (network)
+
+              If port is 0 or no port is provided default port 3333 is used.
+
+              At present there is a hardcoded limit of 16 clients connected at one time.
+
+           --rs-485
+
+              Enable RS-485 mode.
+
+           --rs-485-config <config>
+
+              Set the RS-485 configuration using the following key or key value pair format in the configuration field:
+
+              RTS_ON_SEND=value             Set logical level (0 or 1) for RTS pin when sending
+
+              RTS_AFTER_SEND=value          Set logical level (0 or 1) for RTS pin after sending
+
+              RTS_DELAY_BEFORE_SEND=value   Set RTS delay (ms) before sending
+
+              RTS_DELAY_AFTER_SEND=value    Set RTS delay (ms) after sending
+
+              RX_DURING_TX                  Receive data even while sending data
+
+              If defining more than one key or key value pair, they must be comma separated.
+
+       --alert none|bell|blink
+
+              Set alert action on connect/disconnect.
+
+              It will sound the bell once or blink once on successful connect. Likewise it will sound the bell twice or blink twice on disconnect.
+
+              Default value is "none".
+
+       --mute
+
+              Mute tio messages.
+
+       --script <string>
+
+              Run script from string.
+
+       --script-file <filename>
+
+              Run script from file with filename.
+
+       --script-run once|always|never
+
+              Run script on connect once, always, or never.
+
+              Default value is "always".
+
+       --exec <command>
+
+              Execute shell command with I/O redirected to device
+
+       --complete-profiles
+
+              Prints profiles (for shell completion)
+
+       -v, --version
+
+              Display program version.
+
+       -h, --help
+
+              Display help.
+
+KEY COMMANDS
+       In session, all key strokes are forwarded to the serial device except the following key sequence: a prefix key (default: ctrl-t) followed by a command key. These sequences are intercepted as key commands:
+
+       ctrl-t ?        List available key commands
+
+       ctrl-t b        Send serial break (triggers SysRq on Linux, etc.)
+
+       ctrl-t c        Show configuration (baudrate, databits, etc.)
+
+       ctrl-t e        Toggle local echo mode
+
+       ctrl-t f        Toggle log to file
+
+       ctrl-t F        Flush data I/O buffers (discard data written but not transmitted and data received but not read)
+
+       ctrl-t g        Toggle serial port line
+
+       ctrl-t i        Toggle input mode
+
+       ctrl-t l        Clear screen
+
+       ctrl-t L        Show line states (DTR, RTS, CTS, DSR, DCD, RI)
+
+       ctrl-t m        Change mapping of characters on input or output
+
+       ctrl-t o        Toggle output mode
+
+       ctrl-t p        Pulse serial port line
+
+       ctrl-t q        Quit
+
+       ctrl-t r        Run script
+
+       ctrl-t R        Execute shell command with I/O redirected to device
+
+       ctrl-t s        Show TX/RX statistics
+
+       ctrl-t t        Toggle line timestamp mode
+
+       ctrl-t v        Show version
+
+       ctrl-t x        Send file using the XMODEM-1K or XMODEM-CRC protocol (prompts for file name and protocol)
+
+       ctrl-t y        Send file using the YMODEM protocol (prompts for file name)
+
+       ctrl-t ctrl-t   Send ctrl-t character
+
+SCRIPT API
+       Tio suppots Lua scripting to easily automate interaction with the tty device.
+
+       In addition to the standard Lua API tio makes the following functions available:
+
+       expect(string, timeout)
+             Expect string - waits for string to match or timeout before continuing.  Supports regular expressions. Special characters must be escaped with '\\'.  Timeout is in milliseconds, defaults to 0 meaning it will wait forever.
+
+             Returns 1 on successful match, 0 on timeout, or -1 on error.
+
+             On successful match it also returns the match string as second return value.
+
+       read(size, timeout)
+             Read up to size bytes from serial device. If timeout is 0 or not provided it will wait forever until data is ready to read.
+
+             Returns number of bytes read on success, 0 on timeout, or -1 on error.
+
+             On success, returns read string as second return value.  Also emits a single timestamp to stdout and log file per options.timestamp and options.log.
+
+       read_line(timeout)
+             Read line from serial device. If timeout is 0 or not provided it will wait forever until data is ready to read.
+
+             Returns number of bytes read on success, 0 on timeout, or -1 on error.
+
+             On success, returns the string that was read as second return value.  Also emits a single timestamp to stdout and log file per options.timestamp and options.log.
+
+       write(string)
+             Write string to serial device.
+
+             Returns number of bytes written on success or -1 on error.
+
+       send(file, protocol)
+             Send file using x/y-modem protocol.
+
+             Protocol can be any of XMODEM_1K, XMODEM_CRC, YMODEM.
+
+       tty_search()
+             Search for serial devices.
+
+             Returns a table of number indexed tables, one for each serial device found.  Each of these tables contains the serial device information accessible via the following string indexed elements "path", "tid",  "uptime",  "dri‐
+             ver", "description".
+
+             Returns nil if no serial devices are found.
+
+       set{line=state, ...}
+             Set state of one or multiple tty modem lines.
+
+             Line can be any of DTR, RTS, CTS, DSR, CD, RI
+
+             State is high, low, or toggle.
+
+       sleep(seconds)
+             Sleep for seconds.
+
+       msleep(ms)
+             Sleep for milliseconds.
+
+       exit(code)
+             Exit with exit code.
+
+CONFIGURATION FILE
+       Options can be set via configuration file using the INI format. tio uses the configuration file first found in the following locations in the order listed:
+
+       $XDG_CONFIG_HOME/tio/config
+
+       $HOME/.config/tio/config
+
+       $HOME/.tioconfig
+
+       Labels can be used to group settings into named configuration profiles which can be activated from the command-line when starting tio.
+
+       tio will try to match the user input to a configuration profile by name or by pattern to get the TTY device and other options.
+
+       Options without any label change the default options.
+
+       Any options set via command-line will override options set in the configuration file.
+
+       The following configuration file options are available:
+
+       pattern                  Pattern matching user input. This pattern can be an extended regular expression with a single group.
+
+       device                   TTY device to open. If it contains a "%s" it is substituted with the first group match.
+
+       baudrate                 Set baud rate
+
+       databits                 Set data bits
+
+       flow                     Set flow control
+
+       stopbits                 Set stop bits
+
+       parity                   Set parity
+
+       output-delay             Set output character delay
+
+       output-line-delay        Set output line delay
+
+       line-pulse-duration      Set line pulse duration
+
+       no-reconnect             Do not reconnect
+
+       log                      Enable log to file
+
+       log-file                 Set log filename
+
+       log-directory            Set log directory path in which to save automatically named log files.
+
+       log-append               Append to log file
+
+       log-strip                Enable strip of control and escape sequences from log
+
+       local-echo               Enable local echo
+
+       timestamp                Enable line timestamp
+
+       timestamp-format         Set timestamp format
+
+       timestamp-timeout        Set timestamp timeout
+
+       map                      Map characters on input or output
+
+       color                    Colorize tio text using ANSI color code ranging from 0 to 255
+
+       input-mode               Set input mode
+
+       output-mode              Set output mode
+
+       socket                   Set socket to redirect I/O to
+
+       prefix-ctrl-key          Set prefix ctrl key (a..z or 'none', default: t)
+
+       rs-485                   Enable RS-485 mode
+
+       rs-485-config            Set RS-485 configuration
+
+       alert                    Set alert action on connect/disconnect
+
+       mute                     Mute tio messages
+
+       script                   Run script from string
+
+       script-file              Run script from file
+
+       script-run               Run script on connect
+
+       exec                     Execute shell command with I/O redirected to device
+
+       It is possible to include the content of other configuration files using the include directive like so: "[include <file>]".
+
+CONFIGURATION FILE EXAMPLES
+       To change the default configuration simply set options like so:
+
+              [default]
+              baudrate = 9600
+              databits = 8
+              parity = none
+              stopbits = 1
+              color = 10
+              line-pulse-duration = DTR=200,RTS=400
+
+       Named configuration profiles can be added via labels:
+
+              [rpi3]
+              device = /dev/serial/by-id/usb-FTDI_TTL232R-3V3_FTGQVXBL-if00-port0
+              baudrate = 115200
+              color = 11
+
+       Activate the configuration profile by name:
+
+              $ tio rpi3
+
+       Which is equivalent to:
+
+              $ tio -b 115200 -c 11 /dev/serial/by-id/usb-FTDI_TTL232R-3V3_FTGQVXBL-if00-port0
+
+       A configuration profile can also be activated by its pattern which supports regular expressions:
+
+              [usb-devices]
+              pattern = ^usb([0-9]*)
+              device = /dev/ttyUSB%m1
+              baudrate = 115200
+
+       Activate the configuration profile by pattern match:
+
+              $ tio usb12
+
+       Which becomes equivalent to:
+
+              $ tio -b 115200 /dev/ttyUSB12
+
+       It is also possible to combine use of configuration profile and command-line options. For example:
+
+              $ tio -l -t usb12
+
+EXAMPLES
+       Typical use is without options:
+
+              $ tio /dev/ttyUSB0
+
+       Which corresponds to the commonly used default options:
+
+              $ tio -b 115200 -d 8 -f none -s 1 -p none /dev/ttyUSB0
+
+       It is recommended to connect serial TTY devices by ID:
+
+              $ tio /dev/serial/by-id/usb-FTDI_TTL232R-3V3_FTGQVXBL-if00-port0
+
+       Using serial devices by ID ensures that tio automatically reconnects to the correct serial device if it is disconnected and then reconnected.
+
+       Redirect serial device I/O to Unix file socket for scripting:
+
+              $ tio -S unix:/tmp/tio-socket0 /dev/ttyUSB0
+
+       Then, to issue a command via the file socket simply do:
+
+              $ echo "ls -la" | nc -UN /tmp/tio-socket0 > /dev/null
+
+       Or use the expect command to script an interaction:
+
+              #!/usr/bin/expect -f
+
+              set timeout -1
+              log_user 0
+
+              spawn nc -UN /tmp/tio-socket0
+              set uart $spawn_id
+
+              send -i $uart "date\n"
+              expect -i $uart "prompt> "
+              send -i $uart "ls -la\n"
+              expect -i $uart "prompt> "
+
+       It is also possible to use tio's own simpler expect/send script functionality to e.g. automate logins:
+
+              $ tio --script 'expect("login: "); write("root\n"); expect("Password: "); write("root\n")' /dev/ttyUSB0
+
+       Redirect device I/O to network file socket for remote TTY sharing:
+
+              $ tio --socket inet:4444 /dev/ttyUSB0
+
+       Then, use netcat to connect to the shared TTY session over network (assuming tio is hosted on IP 10.0.0.42):
+
+              $ nc -N 10.0.0.42 4444
+
+       Pipe command to the serial device:
+
+              $ echo "ls -la" | tio /dev/serial/by-id/usb-FTDI_TTL232R-3V3_FTGQVXBL-if00-port0
+
+       Pipe command to serial device and wait for line response within 1 second:
+
+              $ echo "*IDN?" | tio /dev/ttyACM0 --script "expect('\r\n', 1000)" --mute
+
+       Likewise, to pipe data from file to the serial device:
+
+              $ cat data.bin | tio /dev/serial/by-id/usb-FTDI_TTL232R-3V3_FTGQVXBL-if00-port0
+
+       Map NL to CR-NL on input from device and DEL to BS on output to device:
+
+              $ tio --map INLCRNL,ODELBS /dev/ttyUSB0
+
+       Enable RS-485 mode:
+
+              $ tio --rs-485 --rs-485-config=RTS_ON_SEND=1,RX_DURING_TX /dev/ttyUSB0
+
+       Manipulate DTR and RTS lines upon first connect to reset connected microcontroller:
+
+              $ tio --script "set{DTR=high,RTS=low}; msleep(100); set{RTS=toggle}" --script-run once /dev/ttyUSB0
+
+WEBSITE
+       Visit https://tio.github.io
+
+AUTHOR
+       Maintained by Martin Lund <martin.lund@keep-it-simple.com>.
+
+tio 3.9                                                                                                          2025-04-13                                                                                                          tio(1)
