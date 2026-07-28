@@ -15,6 +15,11 @@ core
 # /bin/zmac
 # /bin/z80asm
 
+# zxcc runtime asset: the vestigial CP/M BIOS loaded at startup.
+# Installed by vendor/build-zxcc.sh; must be tracked despite *.bin above.
+!/bin/bios.bin
+!/vendor/zxcc-0.5.7/Z80/bios.bin
+
 # Vendored source build intermediates
 /vendor/zmac/src/zmac
 /vendor/zmac/src/zmac.c
@@ -22,6 +27,7 @@ core
 /vendor/zmac/src/doc.inl
 /vendor/z80asm/src/z80asm
 /vendor/tio/build
+/vendor/zxcc-0.5.7/build
 
 # Vendored source trees fetched by vendor/clone.sh (not committed)
 /vendor/z88dk/

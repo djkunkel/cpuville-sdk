@@ -13,6 +13,7 @@ on PATH.
 vendor/build-zmac.sh       # build & install zmac into bin/
 vendor/build-z80asm.sh     # build & install z80asm into bin/
 vendor/build-tio.sh        # build & install tio into bin/ (needed by console.sh)
+vendor/build-zxcc.sh       # build & install zxcc into bin/ (CP/M .com emulator)
 sh vendor/clone.sh         # fetch z88dk source (not committed; uses git submodules)
 sh vendor/z88dk/build.sh   # build & install z88dk tools into bin/
 ./console.sh               # open a serial terminal (baud/device from serial.conf)
@@ -45,7 +46,9 @@ z80/
 │   ├── cpmget        # receive a file via XMODEM (xmodem-recv) from a sender
 │   ├── xmodem-recv   # Python XMODEM receiver (used by cpmget)
 │   ├── serial-proxy-logger  # debug aid: hex-dump bytes on the serial line
-│   └── tio           # vendored serial terminal (used by console.sh)
+│   ├── tio           # vendored serial terminal (used by console.sh)
+│   ├── zxcc          # vendored CP/M emulator (runs .com files on the host)
+│   └── bios.bin      # vestigial CP/M BIOS loaded by zxcc at startup
 ├── sys/
 │   ├── monitor/      # ROM monitor source + build.sh
 │   └── cpm/          # CP/M 2.2 sources + PCPUT/PCGET XMODEM programs
@@ -53,9 +56,11 @@ z80/
     ├── build-zmac.sh    # builds zmac, installs to bin/zmac
     ├── build-z80asm.sh  # builds z80asm, installs to bin/z80asm
     ├── build-tio.sh     # builds tio, installs to bin/tio (meson + ninja)
+    ├── build-zxcc.sh    # builds zxcc, installs to bin/zxcc
     ├── zmac/            # upstream zmac source
     ├── z80asm/          # upstream z80asm source
     ├── tio/             # forked from https://github.com/tio/tio
+    ├── zxcc-0.5.7/      # upstream zxcc source (CP/M emulator)
     └── z88dk/           # upstream z88dk source (fetched by clone.sh; not committed)
 ```
 
@@ -100,12 +105,51 @@ that compiles the upstream source and copies the resulting binary into `bin/`
 vendor/build-zmac.sh      # builds zmac, installs to bin/zmac
 vendor/build-z80asm.sh    # builds z80asm, installs to bin/z80asm
 vendor/build-tio.sh       # builds tio, installs to bin/tio (meson + ninja)
+vendor/build-zxcc.sh      # builds zxcc, installs to bin/zxcc (no curses; cpmio disabled)
 ```
 
 Re-running `build-zmac.sh` / `build-z80asm.sh` rebuilds from scratch (object
 files are recreated in place). `build-tio.sh` uses meson, so its `tio/build/`
 directory is reused across runs for fast incremental rebuilds; delete
-`vendor/tio/build` to force a full reconfigure.
+`vendor/tio/build` to force a full reconfigure. `build-zxcc.sh` writes
+generated artifacts (a minimal `config.h`, object files, `libcpmredir.a`,
+and the `zxcc` binary) to `vendor/zxcc-0.5.7/build/`; delete that directory
+to force a clean rebuild.
+
+### zxcc — CP/M emulator
+
+`zxcc` (from zxcc-0.5.7) emulates a Z80 plus a subset of CP/M 3, letting
+you run CP/M `.com` programs (such as the Hi-Tech C compiler or DRI's
+MAC/RMAC/LINK) directly on the host. Only the emulator itself is built;
+the `zxc`/`zxas`/`zxlibr`/`zxlink` frontends are thin argument-converting
+wrappers around `zxcc` and are omitted. The optional `cpmio` (curses
+console) layer is disabled, so console I/O uses plain stdio and ncurses
+is not required.
+
+```sh
+zxcc program.com arg1 arg2 ...   # run a CP/M .com file on the host
+```
+
+`zxcc` searches `BINDIR80` then the current directory for `program.com`
+and for `bios.bin` (the vestigial CP/M BIOS). `build-zxcc.sh` compiles
+`BINDIR80` to point at the project's own `bin/` directory and copies the
+bundled `bios.bin` (`vendor/zxcc-0.5.7/Z80/bios.bin`) there, so `zxcc`
+finds it from any cwd after `. ./env.sh` — no separate install step.
+
+The CP/M tools themselves (compiler `.com` files, libraries, headers)
+are not bundled; see `vendor/zxcc-0.5.7/zxcc.html` for setup. Drop any
+`.com` tools into `bin/` (or the current directory) and they'll be
+found. `LIBDIR80`/`INCDIR80` keep the upstream defaults
+(`/usr/local/lib/cpm/lib80/`, `.../include80/`); override the search
+paths by editing the defines written to
+`vendor/zxcc-0.5.7/build/config.h` and rerunning `build-zxcc.sh`.
+
+A sample program lives in `src/cpm/hello/`:
+
+```sh
+. ./env.sh
+zxcc src/cpm/hello/hello.com   # -> Hello from z88dk!
+```
 
 ## The Cpuvulle Z80 machine
 
@@ -281,8 +325,9 @@ error.
   `source ./env.sh`). Running it directly refuses to modify your shell.
 - `bz80asm` derives output names from the input basename, so any extension
   works: `bz80asm foo.z80` → `foo.bin`, `foo.lst`.
-- The vendored `z80asm` is GPLv3; `zmac` has its own license — see
-  `vendor/<tool>/src/` for the upstream COPYING/LICENSE files.
+- The vendored `z80asm` is GPLv3; `zmac` has its own license; `zxcc`
+  is GPLv2 (the Z80 engine) with its `cpmredir` library under the LGPL
+  — see `vendor/<tool>/` for the upstream COPYING/LICENSE files.
 - `cpmget -v` enables byte-level hex tracing to stderr, showing every
   byte transferred in both directions with timestamps. Useful for
   diagnosing protocol issues or counting retries.
