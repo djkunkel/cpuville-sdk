@@ -1,0 +1,69 @@
+#!/bin/sh
+# cpmrun PROGRAM [INPUT...] - run a CP/M .COM file under RunCPM with
+# optional piped input, for testing before transferring to the Z80.
+#
+# Usage:
+#   cpmrun hello.com
+#   cpmrun fprime.com 30
+#   echo "30" | cpmrun fprime.com
+#
+# The .COM file is copied (uppercased) into RunCPM's disk A: user 0,
+# then the program name (without .com) is fed as the first line to the
+# CP/M CCP prompt, followed by any INPUT arguments (one per line). If
+# stdin is a pipe, it is appended after the arguments. RunCPM runs in
+# -s (stream I/O) mode so output goes to stdout.
+#
+# A default timeout of 15s handles the lingering A> prompt after the
+# program exits. Override with CPMRUN_TIMEOUT (seconds).
+
+set -e
+
+[ $# -ge 1 ] || { printf 'usage: cpmrun PROGRAM [INPUT...]\n' >&2; exit 2; }
+
+prog=$1; shift
+case "$prog" in
+  *.com|*.COM) ;;
+  *) prog=$prog.com ;;
+esac
+[ -f "$prog" ] || { printf 'cpmrun: not a file: %s\n' "$prog" >&2; exit 1; }
+
+# Locate the project root (parent of this script's bin/ directory).
+_self=$0
+case $_self in
+  */*) ;;
+  *)
+    _oldifs=$IFS; IFS=:
+    for _d in $PATH; do
+      [ -x "${_d:-.}/$_self" ] && { _self=${_d:-.}/$_self; break; }
+    done
+    IFS=$_oldifs ;;
+esac
+PROJECT_ROOT=$(cd "$(dirname -- "$_self")/.." && pwd)
+BIN_DIR="$PROJECT_ROOT/bin"
+
+DISK="$BIN_DIR/A/0"
+mkdir -p "$DISK"
+
+# Copy the .com into the disk folder, uppercased (CP/M convention on
+# case-sensitive filesystems).
+base=$(basename "$prog")
+ucase=$(printf '%s' "$base" | tr 'a-z' 'A-Z')
+cp -f "$prog" "$DISK/$ucase"
+
+# Program name without extension, lowercased for the CCP command.
+cmd=$(printf '%s' "$base" | sed 's/\.[cC][oO][mM]$//' | tr 'A-Z' 'a-z')
+
+# Build the input: command line, then any args (one per line), then
+# piped stdin if present.
+{
+  printf '%s\n' "$cmd"
+  for arg in "$@"; do
+    printf '%s\n' "$arg"
+  done
+  if [ ! -t 0 ]; then
+    cat
+  fi
+} | timeout "${CPMRUN_TIMEOUT:-15}" "$BIN_DIR/runcpm" -s 2>&1
+
+# runcpm exits non-zero (timeout or EOF); don't propagate that.
+exit 0
