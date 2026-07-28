@@ -22,5 +22,9 @@ core
 /vendor/zmac/src/doc.inl
 /vendor/z80asm/src/z80asm
 
+# Vendored source trees fetched by vendor/clone.sh (not committed)
+/vendor/tio/
+/vendor/z88dk/
+
 # Stray scratch file at repo root
 /a.bin

@@ -1,10 +1,10 @@
 #!/bin/sh
 # Build script for zmac. Generates zmac.c from zmac.y with bison,
 # builds the doc tool to produce doc.inl, compiles everything, and
-# copies the resulting binary into ../../bin (the project bin folder).
+# copies the resulting binary into ../bin (the project bin folder).
 set -e
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")"            # -> vendor/
 
 CC=${CC:-gcc}
 CXX=${CXX:-g++}
@@ -12,11 +12,11 @@ CXX=${CXX:-g++}
 CFLAGS=${CFLAGS:-"-Wall -std=gnu11"}
 CXXFLAGS=${CXXFLAGS:-"-Wall -std=gnu++11"}
 
-# Install into the project's bin/ folder (absolute path so cd src is safe).
-BIN_DIR="$(pwd)/../../bin"
+# Install into the project's bin/ folder (absolute path so cd zmac/src is safe).
+BIN_DIR="$(pwd)/../bin"
 mkdir -p "$BIN_DIR"
 
-cd src
+cd zmac/src
 
 # Generate doc.inl from doc.c + doc.txt
 $CC $CFLAGS -DMK_DOC -o doc doc.c
@@ -34,6 +34,6 @@ $CXX $CXXFLAGS -c -o zi80dis.o zi80dis.cpp
 # Link
 $CXX $CXXFLAGS -o zmac zmac.o mio.o doc.o zi80dis.o
 
-# Install into ../../bin
+# Install into ../bin
 cp -f zmac "$BIN_DIR/"
 echo "Built and copied zmac to $BIN_DIR/zmac"

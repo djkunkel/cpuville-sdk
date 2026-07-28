@@ -10,8 +10,9 @@ on PATH.
 
 ```sh
 . ./env.sh                 # put bin/ on PATH (zmac, z80asm, runmon, ...)
-vendor/zmac/build.sh       # build & install zmac into bin/
-vendor/z80asm/build.sh     # build & install z80asm into bin/
+vendor/build-zmac.sh       # build & install zmac into bin/
+vendor/build-z80asm.sh     # build & install z80asm into bin/
+vendor/build-tio.sh        # build & install tio into bin/ (needed by console.sh)
 ./console.sh               # open a serial terminal (baud/device from serial.conf)
 ```
 
@@ -41,13 +42,19 @@ z80/
 │   ├── cpmput        # send a file via XMODEM (sx) to a waiting receiver
 │   ├── cpmget        # receive a file via XMODEM (xmodem-recv) from a sender
 │   ├── xmodem-recv   # Python XMODEM receiver (used by cpmget)
-│   └── serial-proxy-logger  # debug aid: hex-dump bytes on the serial line
+│   ├── serial-proxy-logger  # debug aid: hex-dump bytes on the serial line
+│   └── tio           # vendored serial terminal (used by console.sh)
 ├── sys/
 │   ├── monitor/      # ROM monitor source + build.sh
 │   └── cpm/          # CP/M 2.2 sources + PCPUT/PCGET XMODEM programs
 └── vendor/
-    ├── zmac/         # upstream zmac source + build.sh
-    └── z80asm/       # upstream z80asm source + build.sh
+    ├── build-zmac.sh    # builds zmac, installs to bin/zmac
+    ├── build-z80asm.sh  # builds z80asm, installs to bin/z80asm
+    ├── build-tio.sh     # builds tio, installs to bin/tio (meson + ninja)
+    ├── zmac/            # upstream zmac source
+    ├── z80asm/          # upstream z80asm source
+    ├── tio/             # upstream tio source
+    └── z88dk/           # upstream z88dk source (build.sh is upstream's own)
 ```
 
 > **See also:** [`PLAN.md`](PLAN.md) records design options for a
@@ -81,18 +88,22 @@ directly (`zmac --help` / `z80asm -h`).
 
 ### Building the vendored tools from source
 
-Each vendored tool has its own `build.sh` that compiles from source and
-copies the resulting binary into `bin/` (the directory `env.sh` puts on
-PATH). They honor the standard `CC`, `CFLAGS`, and `LDFLAGS` environment
-variables, falling back to sane defaults.
+Each vendored tool has a named build script in `vendor/` (`build-<tool>.sh`)
+that compiles the upstream source and copies the resulting binary into `bin/`
+(the directory `env.sh` puts on PATH). The upstream source trees under
+`vendor/<tool>/` are kept untouched. The scripts honor the standard `CC`,
+`CFLAGS`, and `LDFLAGS` environment variables, falling back to sane defaults.
 
 ```sh
-vendor/zmac/build.sh      # builds zmac, installs to bin/zmac
-vendor/z80asm/build.sh    # builds z80asm, installs to bin/z80asm
+vendor/build-zmac.sh      # builds zmac, installs to bin/zmac
+vendor/build-z80asm.sh    # builds z80asm, installs to bin/z80asm
+vendor/build-tio.sh       # builds tio, installs to bin/tio (meson + ninja)
 ```
 
-Re-running either script rebuilds from scratch (object files are recreated
-in place). The upstream sources live untouched under `vendor/<tool>/src/`.
+Re-running `build-zmac.sh` / `build-z80asm.sh` rebuilds from scratch (object
+files are recreated in place). `build-tio.sh` uses meson, so its `tio/build/`
+directory is reused across runs for fast incremental rebuilds; delete
+`vendor/tio/build` to force a full reconfigure.
 
 ## The Cpuvulle Z80 machine
 

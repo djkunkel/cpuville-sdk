@@ -24,5 +24,27 @@ _env_sh_dir() {
 SCRIPT_DIR="$(_env_sh_dir)"
 unset -f _env_sh_dir
 
+# Bring in z88dk's tooling (zcc, z80asm-legacy, etc.) by sourcing its
+# own set_environment.sh, which prepends vendor/z88dk/bin to PATH and
+# exports ZCCCFG (the config dir zcc needs at runtime). That script is
+# written to be sourced from inside vendor/z88dk (it uses `pwd`), so we
+# cd there first, source it, then restore the working directory.
+#
+# We source z88dk BEFORE prepending the project bin so that the project's
+# wrappers (bzmac, bz80asm, runmon, ...) end up ahead of z88dk's tools in
+# PATH, giving them precedence over any name collisions (e.g. z80asm).
+Z88DK_DIR="$SCRIPT_DIR/vendor/z88dk"
+if [ -f "$Z88DK_DIR/set_environment.sh" ]; then
+  _saved_pwd=$(pwd)
+  cd "$Z88DK_DIR"
+  . ./set_environment.sh
+  cd "$_saved_pwd"
+  unset _saved_pwd
+  echo "Added $Z88DK_DIR/bin to PATH (and set ZCCCFG=$ZCCCFG)"
+else
+  echo "Warning: $Z88DK_DIR/set_environment.sh not found; z88dk tools not on PATH" >&2
+fi
+unset Z88DK_DIR
+
 export PATH="$SCRIPT_DIR/bin:$PATH"
 echo "Added $SCRIPT_DIR/bin to PATH"
