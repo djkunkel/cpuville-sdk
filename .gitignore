@@ -12,24 +12,14 @@ core
 *~
 \#*
 
-# Vendored tool build outputs (binaries built into bin/ by build.sh)
-# /bin/zmac
-# /bin/z80asm
-
-# Vendored source build intermediates
+# Vendored source build intermediates (committed source trees)
 /vendor/zmac/src/zmac
 /vendor/zmac/src/zmac.c
 /vendor/zmac/src/doc
 /vendor/zmac/src/doc.inl
 /vendor/z80asm/src/z80asm
 /vendor/tio/build
-/vendor/tnylpo/*.o
-/vendor/tnylpo/tnylpo
-/vendor/tnylpo/tnylpo-convert
 
 # Vendored source trees fetched by vendor/clone.sh (not committed)
 /vendor/z88dk/
 /vendor/tnylpo/
-
-# Stray scratch file at repo root
-/a.bin
