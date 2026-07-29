@@ -1,1 +1,1 @@
-cpm +cpm -lm -lndos -o hello.com hello.c
+zcc +cpm -lndos -pragma-output:noprotectmsdos -o hello.com main.c
