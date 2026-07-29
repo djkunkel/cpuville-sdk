@@ -1,5 +1,5 @@
 #!/bin/sh
-# cpmrun PROGRAM [INPUT...] - run a CP/M .COM file under RunCPM with
+# cpmrun PROGRAM [INPUT...] - run a CP/M .COM file under tnylpo with
 # optional piped input, for testing before transferring to the Z80.
 #
 # Usage:
@@ -7,14 +7,17 @@
 #   cpmrun fprime.com 30
 #   echo "30" | cpmrun fprime.com
 #
-# The .COM file is copied (uppercased) into RunCPM's disk A: user 0,
-# then the program name (without .com) is fed as the first line to the
-# CP/M CCP prompt, followed by any INPUT arguments (one per line). If
-# stdin is a pipe, it is appended after the arguments. RunCPM runs in
-# -s (stream I/O) mode so output goes to stdout.
+# tnylpo runs .COM files directly (no CCP, no disk images) and exits
+# cleanly when the program finishes. The -b flag selects line-mode
+# console so output goes to stdout and input is read from stdin.
 #
-# A default timeout of 15s handles the lingering A> prompt after the
-# program exits. Override with CPMRUN_TIMEOUT (seconds).
+# Any INPUT arguments are fed as lines to the program's stdin, followed
+# by piped stdin if present.
+#
+# Note: programs that poll for console status (e.g. z88dk's getk() for
+# CTRL-C handling) will see "input ready" whenever piped data is
+# available, which can consume bytes meant for scanf. Test such programs
+# interactively (without a pipe) or without the polling check.
 
 set -e
 
@@ -41,29 +44,25 @@ esac
 PROJECT_ROOT=$(cd "$(dirname -- "$_self")/.." && pwd)
 BIN_DIR="$PROJECT_ROOT/bin"
 
-DISK="$BIN_DIR/A/0"
-mkdir -p "$DISK"
-
-# Copy the .com into the disk folder, uppercased (CP/M convention on
-# case-sensitive filesystems).
+# tnylpo requires the command basename to be lowercase (CP/M convention
+# enforced on case-sensitive filesystems). Copy to a temp dir with a
+# lowercase name to satisfy this check.
 base=$(basename "$prog")
-ucase=$(printf '%s' "$base" | tr 'a-z' 'A-Z')
-cp -f "$prog" "$DISK/$ucase"
+lcase=$(printf '%s' "$base" | tr 'A-Z' 'a-z')
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+cp -f "$prog" "$tmpdir/$lcase"
 
-# Program name without extension, lowercased for the CCP command.
-cmd=$(printf '%s' "$base" | sed 's/\.[cC][oO][mM]$//' | tr 'A-Z' 'a-z')
-
-# Build the input: command line, then any args (one per line), then
-# piped stdin if present.
-{
-  printf '%s\n' "$cmd"
-  for arg in "$@"; do
-    printf '%s\n' "$arg"
-  done
-  if [ ! -t 0 ]; then
-    cat
-  fi
-} | timeout "${CPMRUN_TIMEOUT:-15}" "$BIN_DIR/runcpm" -s 2>&1
-
-# runcpm exits non-zero (timeout or EOF); don't propagate that.
-exit 0
+# Feed any args as lines, then piped stdin if present.
+if [ $# -gt 0 ] || [ ! -t 0 ]; then
+  {
+    for arg in "$@"; do
+      printf '%s\n' "$arg"
+    done
+    if [ ! -t 0 ]; then
+      cat
+    fi
+  } | "$BIN_DIR/tnylpo" -b "$tmpdir/$lcase" 2>&1
+else
+  "$BIN_DIR/tnylpo" -b "$tmpdir/$lcase" 2>&1
+fi

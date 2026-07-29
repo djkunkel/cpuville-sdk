@@ -1,10 +1,11 @@
 #!/bin/sh
 # Fetch vendored upstream source trees that are NOT committed to this
-# repository. Currently that is z88dk and RunCPM.
+# repository. Currently that is z88dk and tnylpo.
 #
 # z88dk uses git submodules (optparse, regex, Unity, UNIXem, uthash under
 # ext/), so it must be cloned with --recursive.
-# RunCPM is a standalone CP/M 2.2 emulator.
+# tnylpo is a CP/M 2.2 emulator that integrates CP/M programs into the
+# Unix command line (runs .com files directly, no CCP/disk images).
 #
 # Run from anywhere; sources are placed in vendor/<tool>/ next to this
 # script:
@@ -21,7 +22,7 @@ set -e
 cd "$(dirname "$0")"            # -> vendor/
 
 Z88DK_URL="https://github.com/z88dk/z88dk.git"
-RUNCPM_URL="https://github.com/MockbaTheBorg/RunCPM.git"
+TNYLPO_URL="https://gitlab.com/gbrein/tnylpo.git"
 
 if [ -e z88dk ]; then
   printf 'vendor/z88dk already exists; skipping clone.\n' >&2
@@ -33,14 +34,14 @@ else
   printf 'Next: sh vendor/z88dk/build.sh\n'
 fi
 
-if [ -e runcpm ]; then
-  printf 'vendor/runcpm already exists; skipping clone.\n' >&2
-  printf 'To re-clone, remove it first:  rm -rf vendor/runcpm\n' >&2
+if [ -e tnylpo ]; then
+  printf 'vendor/tnylpo already exists; skipping clone.\n' >&2
+  printf 'To re-clone, remove it first:  rm -rf vendor/tnylpo\n' >&2
 else
-  printf 'Cloning RunCPM at latest master...\n'
-  git clone --depth 1 "$RUNCPM_URL" runcpm
-  printf 'Done. RunCPM source is in vendor/runcpm.\n'
-  printf 'Next: sh vendor/build-runcpm.sh\n'
+  printf 'Cloning tnylpo at latest master...\n'
+  git clone "$TNYLPO_URL" tnylpo
+  printf 'Done. tnylpo source is in vendor/tnylpo.\n'
+  printf 'Next: sh vendor/build-tnylpo.sh\n'
 fi
 
 printf '\nRun . ./env.sh to put built tools on PATH.\n'

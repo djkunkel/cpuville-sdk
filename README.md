@@ -13,9 +13,9 @@ on PATH.
 vendor/build-zmac.sh       # build & install zmac into bin/
 vendor/build-z80asm.sh     # build & install z80asm into bin/
 vendor/build-tio.sh        # build & install tio into bin/ (needed by console.sh)
-sh vendor/clone.sh         # fetch z88dk + RunCPM source (not committed)
+sh vendor/clone.sh         # fetch z88dk + tnylpo source (not committed)
 sh vendor/z88dk/build.sh   # build & install z88dk tools into bin/
-vendor/build-runcpm.sh     # build & install runcpm into bin/ (CP/M 2.2 emulator)
+vendor/build-tnylpo.sh     # build & install tnylpo into bin/ (CP/M 2.2 emulator)
 ./console.sh               # open a serial terminal (baud/device from serial.conf)
 ```
 
@@ -47,7 +47,8 @@ z80/
 │   ├── xmodem-recv   # Python XMODEM receiver (used by cpmget)
 │   ├── serial-proxy-logger  # debug aid: hex-dump bytes on the serial line
 │   ├── tio           # vendored serial terminal (used by console.sh)
-│   ├── runcpm        # vendored CP/M 2.2 emulator (full CCP, stream I/O)
+│   ├── tnylpo        # vendored CP/M 2.2 emulator (runs .com directly)
+│   ├── cpmrun        # wrapper to test .com files under tnylpo
 │   └── xmodem-recv   # Python XMODEM receiver (used by cpmget)
 ├── sys/
 │   ├── monitor/      # ROM monitor source + build.sh
@@ -56,11 +57,11 @@ z80/
     ├── build-zmac.sh    # builds zmac, installs to bin/zmac
     ├── build-z80asm.sh  # builds z80asm, installs to bin/z80asm
     ├── build-tio.sh     # builds tio, installs to bin/tio (meson + ninja)
-    ├── build-runcpm.sh  # builds runcpm, installs to bin/runcpm
+    ├── build-tnylpo.sh  # builds tnylpo, installs to bin/tnylpo + bin/tnylpo-convert
     ├── zmac/            # upstream zmac source
     ├── z80asm/          # upstream z80asm source
     ├── tio/             # forked from https://github.com/tio/tio
-    ├── runcpm/          # upstream RunCPM source (fetched by clone.sh; not committed)
+    ├── tnylpo/          # upstream tnylpo source (fetched by clone.sh; not committed)
     └── z88dk/           # upstream z88dk source (fetched by clone.sh; not committed)
 ```
 
@@ -105,62 +106,66 @@ that compiles the upstream source and copies the resulting binary into `bin/`
 vendor/build-zmac.sh      # builds zmac, installs to bin/zmac
 vendor/build-z80asm.sh    # builds z80asm, installs to bin/z80asm
 vendor/build-tio.sh       # builds tio, installs to bin/tio (meson + ninja)
-vendor/build-runcpm.sh    # builds runcpm, installs to bin/runcpm (CP/M 2.2 emulator)
+vendor/build-tnylpo.sh    # builds tnylpo, installs to bin/tnylpo (CP/M 2.2 emulator)
 ```
 
 Re-running `build-zmac.sh` / `build-z80asm.sh` rebuilds from scratch (object
 files are recreated in place). `build-tio.sh` uses meson, so its `tio/build/`
 directory is reused across runs for fast incremental rebuilds; delete
-`vendor/tio/build` to force a full reconfigure. `build-runcpm.sh` applies a
-patch to the upstream RunCPM source (`console.h` STREAMIO fix) before
-compiling; re-running it is safe (the patch is idempotent via `git apply`).
+`vendor/tio/build` to force a full reconfigure. `build-tnylpo.sh` runs
+`make clean` before building, so re-running it always does a full rebuild.
 
-### RunCPM — CP/M 2.2 emulator
+### tnylpo — CP/M 2.2 emulator
 
-`runcpm` (from [MockbaTheBorg/RunCPM](https://github.com/MockbaTheBorg/RunCPM))
-is a full CP/M 2.2 emulator that boots an internal CCP and uses host
-folders as disk drives. It is built with `STREAMIO` support so the
-`-s` flag connects stdin/stdout directly, enabling automated testing
-with piped input.
+`tnylpo` (from [gbrein/tnylpo](https://gitlab.com/gbrein/tnylpo)) is a
+CP/M 2.2 emulator that runs `.COM` files directly from the Unix command
+line — no CCP, no disk images — and integrates with the host
+filesystem. It supports piped stdin for automated testing, making it
+ideal for verifying programs before transferring them to the Cpuvulle
+Z80.
 
-Build and run:
+Build:
 
 ```sh
 . ./env.sh
-vendor/build-runcpm.sh        # builds runcpm, sets up bin/A/0/ disk folder
+vendor/build-tnylpo.sh      # builds tnylpo + tnylpo-convert, installs to bin/
 ```
 
-RunCPM looks for disk drive folders (`A/`, `B/`, ...) relative to the
-`bin/` directory. Copy `.COM` files (uppercase) into `bin/A/0/` (user
-area 0 of drive A):
+The wrapper `cpmrun` handles the lowercase-basename requirement and
+feeds input args or piped stdin to the program:
 
 ```sh
-cp src/cpm/fprime/fprime.com bin/A/0/FPRIME.COM
-```
-
-Then run with piped input (`-s` = stdin/stdout mode):
-
-```sh
-printf "fprime\n30\n" | runcpm -s
+cpmrun hello.com
+cpmrun fprime.com 30
+echo "30" | cpmrun fprime.com
 # -> MAX NUMBER TO CHECK
 #    30
 #    2 3 5 7 11 13 17 19 23 29
 ```
 
-The first line (`fprime`) is the CP/M command (program name at the
-`A>` prompt); subsequent lines are the program's stdin. Use `timeout`
-to handle the lingering CCP prompt after the program exits (RunCPM
-returns to `A>` and waits for more commands):
+`tnylpo` can also be called directly (the command basename must be
+lowercase):
 
 ```sh
-timeout 10 bash -c 'printf "fprime\n100\n" | runcpm -s'
+tnylpo -b hello.com
+echo "30" | tnylpo -b fprime.com
 ```
 
-A patch to RunCPM's `console.h` fixes `_chready()` in STREAMIO mode so
-that programs polling for console status (e.g. z88dk's `getk()` for
-CTRL-C handling) don't drain the pipe and abort on EOF. The patch is
-kept in `vendor/runcpm-streamio-console-fix.patch` and applied
-automatically by `build-runcpm.sh`.
+The `-b` flag selects line-mode console (output to stdout, input from
+stdin). `tnylpo` exits cleanly when the CP/M program terminates — no
+lingering CCP prompt or timeout needed.
+
+> **Note:** programs that poll for console status (e.g. z88dk's
+> `getk()` for CTRL-C handling) will see "input ready" whenever piped
+> data is available, which can consume bytes meant for `scanf`. Test
+> such programs interactively (without a pipe) or without the polling
+> check. This is a fundamental limitation of piped input, not a tnylpo
+> bug — the CTRL-C check works correctly on real hardware where a
+> physical keyboard is polled.
+
+The companion `tnylpo-convert` converts text files between Unix and
+CP/M line-ending formats. See `tnylpo.1` (the man page in the source
+tree) for full documentation of tnylpo's options.
 
 ## The Cpuvulle Z80 machine
 
@@ -336,8 +341,8 @@ error.
   `source ./env.sh`). Running it directly refuses to modify your shell.
 - `bz80asm` derives output names from the input basename, so any extension
   works: `bz80asm foo.z80` → `foo.bin`, `foo.lst`.
-- The vendored `z80asm` is GPLv3; `zmac` has its own license; `runcpm`
-  is MIT — see `vendor/<tool>/` for the upstream LICENSE files.
+- The vendored `z80asm` is GPLv3; `zmac` has its own license; `tnylpo`
+  is BSD-2-Clause — see `vendor/<tool>/` for the upstream LICENSE files.
 - `cpmget -v` enables byte-level hex tracing to stderr, showing every
   byte transferred in both directions with timestamps. Useful for
   diagnosing protocol issues or counting retries.

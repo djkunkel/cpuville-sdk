@@ -23,15 +23,13 @@ core
 /vendor/zmac/src/doc.inl
 /vendor/z80asm/src/z80asm
 /vendor/tio/build
-/vendor/runcpm/RunCPM/RunCPM
-/vendor/runcpm/RunCPM/*.o
+/vendor/tnylpo/*.o
+/vendor/tnylpo/tnylpo
+/vendor/tnylpo/tnylpo-convert
 
 # Vendored source trees fetched by vendor/clone.sh (not committed)
 /vendor/z88dk/
-/vendor/runcpm/
-
-# RunCPM disk folders (CP/M disk images, built by build-runcpm.sh)
-/bin/A/
+/vendor/tnylpo/
 
 # Stray scratch file at repo root
 /a.bin
